@@ -31,10 +31,12 @@ router.post('/register', async (req, res) => {
       [username, email, hashedPassword],
       async function(err) {
         if (err) {
-          if (err.message.includes('UNIQUE constraint')) {
+          console.error('[Register Error] DB error creating user:', err);
+          const msg = (err.message || '').toLowerCase();
+          if (msg.includes('unique') || msg.includes('duplicate')) {
             return res.status(400).json({ error: 'Username or email already exists' });
           }
-          return res.status(500).json({ error: 'Registration failed' });
+          return res.status(500).json({ error: `Registration failed: ${err.message || 'Database error'}` });
         }
         
         // Generate and store OTP
