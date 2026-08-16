@@ -93,6 +93,11 @@ app.get('/api/places', (req, res) => {
   }
 });
 
+// Root route for instant Render health checks
+app.get('/', (req, res) => {
+  res.json({ status: 'ok', service: 'BusGo Backend API', time: new Date().toISOString() });
+});
+
 // Health check
 app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', message: 'Server is running' });
