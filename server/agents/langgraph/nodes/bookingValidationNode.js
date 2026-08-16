@@ -1215,6 +1215,19 @@ async function bookingValidationNode(state) {
       const strictTimePreference = !!userPreferences.timeOfDay;
       const strictBusTypePreference = userPreferences.busType !== undefined || typeof userPreferences.hasAC === 'boolean';
       
+      if (!fromCity || !toCity) {
+        const missingCityMsg = `To book a seat, please specify both your starting city (departure) and destination city. For example: "Book 2 seats from Mumbai to Pune on 20th August".\n\n📌 **BusGo Platform Information:**\n• Search & Book buses across all active routes\n• Choose preferred seats (Window/Aisle, Front/Middle/Back)\n• Instant booking confirmation with PNR & email verification\n• Transparent cancellation & refund policies\n• 24/7 AI Travel Assistant for route timings & fare guidance`;
+        return {
+          agentResults: { booking_validation: { success: false, error: missingCityMsg, requiresTwoCities: true } },
+          structuredData: { error: missingCityMsg, requiresTwoCities: true },
+          finalResponse: missingCityMsg,
+          halted: true,
+          haltReason: 'Both departure and destination cities are required for seat booking.',
+          traces,
+          decisionTrail: [{ agent: 'BookingAgent', status: 'missing_cities', steps: traces.length, duration_ms: Date.now() - startTime }]
+        };
+      }
+
       if (fromCity && toCity) {
         addTrace('thought', `No schedule ID provided. Searching for ${fromCity} → ${toCity}`);
         

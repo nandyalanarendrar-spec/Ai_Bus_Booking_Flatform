@@ -1520,12 +1520,36 @@ function performDailyCleanup(routesData) {
   }
 }
 
+function deduplicateSchedules(callback) {
+  // Purge duplicate schedule rows keeping only the first (lowest ID) for each (route_id, bus_id, travel_date, departure_time)
+  db.run(`
+    DELETE FROM schedules
+    WHERE id IN (
+      SELECT s1.id
+      FROM schedules s1
+      INNER JOIN schedules s2 ON s1.route_id = s2.route_id 
+        AND s1.bus_id = s2.bus_id 
+        AND s1.travel_date = s2.travel_date 
+        AND s1.departure_time = s2.departure_time
+      WHERE s1.id > s2.id
+    )
+  `, function(err) {
+    if (!err && this && this.changes > 0) {
+      console.log(`✅ Deduplicated database: Purged ${this.changes} duplicate schedule entry/entries.`);
+    }
+    if (typeof callback === 'function') callback();
+  });
+}
+
 function performDailyCleanupWithData(routesData, todayStr, day35Str) {
   console.log('');
   console.log('================================================================================');
   console.log('📅 DAILY CLEANUP PROCESS');
   console.log('================================================================================');
   
+  // Deduplicate any accidental duplicate schedules first
+  deduplicateSchedules();
+
   // First, check current date range in database
   db.get(`
     SELECT 
