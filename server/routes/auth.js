@@ -429,4 +429,19 @@ router.get('/me', authenticateToken, (req, res) => {
   res.json({ user: req.user });
 });
 
+// Diagnostic endpoint to test email dispatch live
+router.get('/test-email', async (req, res) => {
+  const targetEmail = req.query.email || process.env.EMAIL_USER || 'nnrreddy.123456789@gmail.com';
+  console.log(`🧪 Diagnostics: Testing email dispatch to ${targetEmail}...`);
+  const success = await sendOTPEmail(targetEmail, '123456');
+  res.json({
+    timestamp: new Date().toISOString(),
+    targetEmail,
+    envEmailUser: process.env.EMAIL_USER || 'nnrreddy.123456789@gmail.com',
+    hasAppPasswordEnv: !!process.env.EMAIL_APP_PASSWORD,
+    dispatchSuccess: success,
+    status: success ? 'EMAIL_DISPATCHED_OK' : 'DISPATCH_FAILED_CHECK_RENDER_LOGS'
+  });
+});
+
 module.exports = router;

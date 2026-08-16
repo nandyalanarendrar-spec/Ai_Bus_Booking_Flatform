@@ -1,40 +1,53 @@
 const nodemailer = require('nodemailer');
 
-// Email configuration - Use environment variables in production (sanitize whitespace/spaces)
-const EMAIL_USER = (process.env.EMAIL_USER || 'nnrreddy.123456789@gmail.com').trim();
-const EMAIL_APP_PASSWORD = (process.env.EMAIL_APP_PASSWORD || 'kuvxnjnublmcnpik').replace(/\s+/g, '').trim();
+// Dynamically build Nodemailer transporter using fresh process.env credentials
+function getTransporter() {
+  const user = (process.env.EMAIL_USER || 'nnrreddy.123456789@gmail.com').trim();
+  const pass = (process.env.EMAIL_APP_PASSWORD || 'htzrfjjiladqgmun').replace(/[\s\-]+/g, '').trim();
 
-// Create transporter using Gmail service for maximum cloud host compatibility (Render, Heroku, AWS, etc.)
-const transporter = nodemailer.createTransport({
-  service: 'gmail',
-  auth: {
-    user: EMAIL_USER,
-    pass: EMAIL_APP_PASSWORD
-  },
-  tls: {
-    rejectUnauthorized: false
-  }
-});
+  return nodemailer.createTransport({
+    service: 'gmail',
+    host: 'smtp.gmail.com',
+    port: 465,
+    secure: true,
+    auth: {
+      user: user,
+      pass: pass
+    },
+    tls: {
+      rejectUnauthorized: false
+    },
+    connectionTimeout: 20000,
+    greetingTimeout: 20000,
+    socketTimeout: 25000
+  });
+}
 
-// Verify transporter configuration asynchronously without blocking startup
-transporter.verify((error, success) => {
-  if (error) {
-    console.error('⚠️  Email SMTP verification error:', error.message);
-    console.error('   Ensure EMAIL_USER and EMAIL_APP_PASSWORD (16-char App Password without spaces) are set correctly in Render Settings.');
-  } else {
-    console.log(`✅ Email service ready & authenticated for ${EMAIL_USER}`);
-  }
-});
+// Verify transporter configuration on startup
+try {
+  getTransporter().verify((error, success) => {
+    if (error) {
+      console.error('⚠️ Email SMTP verification notice:', error.message);
+    } else {
+      console.log('✅ Email service ready & authenticated via Gmail SSL');
+    }
+  });
+} catch (e) {
+  console.error('⚠️ Transporter verify exception:', e.message);
+}
 
 /**
- * Send OTP email to admin
- * @param {string} email - Admin email address
+ * Send OTP email to user for verification
+ * @param {string} email - Recipient email address
  * @param {string} otp - 6-digit OTP code
  * @returns {Promise<boolean>} - Success status
  */
 async function sendOTPEmail(email, otp) {
+  const user = (process.env.EMAIL_USER || 'nnrreddy.123456789@gmail.com').trim();
+  const transporter = getTransporter();
+
   const mailOptions = {
-    from: `"Public Bus Booking" <${EMAIL_USER}>`,
+    from: `"Public Bus Booking" <${user}>`,
     to: email,
     subject: 'Email Verification - Public Bus Booking',
     html: `
@@ -90,11 +103,12 @@ async function sendOTPEmail(email, otp) {
   };
 
   try {
-    await transporter.sendMail(mailOptions);
-    console.log(`📧 OTP sent to ${email}`);
+    const info = await transporter.sendMail(mailOptions);
+    console.log(`📧 OTP sent successfully to ${email} (MsgID: ${info.messageId})`);
     return true;
   } catch (error) {
-    console.error('❌ Error sending email:', error.message);
+    console.error(`❌ Error sending OTP email to ${email}:`, error.message);
+    if (error.response) console.error('   SMTP Server Response:', error.response);
     return false;
   }
 }
