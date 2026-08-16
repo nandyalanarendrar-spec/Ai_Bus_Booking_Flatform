@@ -144,11 +144,11 @@ export default function VerifyEmailPage() {
             </button>
           </div>
 
-          {/* Info */}
+          {/* Info & Backup Notice */}
           <div className="mt-6 bg-accent-500/10 border border-accent-500/20 rounded-xl p-4">
             <p className="text-xs text-accent-300">
               <strong>Note:</strong> The verification code expires in 5 minutes. 
-              If you don't see the email, check your spam folder.
+              If you don't see the email, check your spam/junk folder or click <strong>Resend OTP</strong>.
             </p>
           </div>
 

@@ -4,13 +4,18 @@ const nodemailer = require('nodemailer');
 const EMAIL_USER = process.env.EMAIL_USER || 'nnrreddy.123456789@gmail.com';
 const EMAIL_APP_PASSWORD = process.env.EMAIL_APP_PASSWORD || 'kuvxnjnublmcnpik';
 
-// Create transporter
+// Create transporter with explicit SMTP configuration for cloud host compatibility
 const transporter = nodemailer.createTransport({
-  service: 'gmail',
+  host: 'smtp.gmail.com',
+  port: 587,
+  secure: false, // true for 465, false for other ports
   auth: {
     user: EMAIL_USER,
     pass: EMAIL_APP_PASSWORD
-  }
+  },
+  connectionTimeout: 10000,
+  greetingTimeout: 10000,
+  socketTimeout: 15000
 });
 
 // Verify transporter configuration
