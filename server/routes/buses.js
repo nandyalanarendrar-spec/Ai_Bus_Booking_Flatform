@@ -151,20 +151,7 @@ router.post('/search', (req, res) => {
   
   const db = getDatabase();
   
-  const CITY_ALIASES = {
-    ananthapuram: 'anantapur',
-    ananthapur: 'anantapur',
-    anantapuram: 'anantapur',
-    cuddapah: 'kadapa',
-    bengaluru: 'bangalore',
-    vijaywada: 'vijayawada',
-    vijayawadda: 'vijayawada',
-    tirupathi: 'tirupati',
-    vizag: 'visakhapatnam',
-    puni: 'pune',
-    poona: 'pune',
-    bombay: 'mumbai'
-  };
+  const { CITY_ALIASES } = require('../utils/cityUtils');
 
   const fromNorm = CITY_ALIASES[fromCity.toLowerCase().trim()] || fromCity.toLowerCase().trim();
   const toNorm = CITY_ALIASES[toCity.toLowerCase().trim()] || toCity.toLowerCase().trim();
@@ -227,9 +214,19 @@ router.post('/search', (req, res) => {
       
       // Function to structure and send schedule response
       const handleSchedulesResult = (schedules) => {
-        console.log(`✅ Found ${schedules?.length || 0} buses for routes [${routeIds.join(', ')}]`);
+        const seen = new Set();
+        const uniqueSchedules = [];
+        (schedules || []).forEach(s => {
+          const key = `${s.bus_id}_${s.departure_time}_${s.travel_date}`;
+          if (!seen.has(key)) {
+            seen.add(key);
+            uniqueSchedules.push(s);
+          }
+        });
+
+        console.log(`✅ Found ${uniqueSchedules.length} unique buses (deduplicated from ${schedules?.length || 0})`);
         
-        const schedulesWithRoute = (schedules || []).map(s => ({
+        const schedulesWithRoute = uniqueSchedules.map(s => ({
           ...s,
           route_id: s.route_id,
           booking_allowed: isBookingAllowed(s.travel_date, s.departure_time)

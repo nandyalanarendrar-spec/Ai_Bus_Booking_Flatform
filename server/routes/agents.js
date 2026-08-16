@@ -26,26 +26,16 @@ function extractEntitiesFromMessage(message) {
   msg = msg.replace(/\b(\d{1,2})(?:st|nd|rd|th)\b/gi, '$1');
   const result = {};
 
-  const cityAliases = {
-    hyderbad: 'hyderabad',
-    vijayawadda: 'vijayawada',
-    vijaywada: 'vijayawada',
-    bengaluru: 'bangalore',
-    tirupathi: 'tirupati',
-    vizag: 'visakhapatnam',
-    ananthapuram: 'anantapur',
-    ananthapur: 'anantapur',
-    anantapuram: 'anantapur',
-    cuddapah: 'kadapa'
-  };
+  const { CITY_ALIASES: globalCityAliases, normalizeCity: globalNormalizeCity } = require('../utils/cityUtils');
+
+  const cityAliases = globalCityAliases;
 
   const normalizeCity = (city) => {
-    const normalized = city.toLowerCase().trim();
-    return cityAliases[normalized] || normalized;
+    return globalNormalizeCity(city);
   };
 
   // Known cities in the system
-  const cities = ['hyderabad', 'vijayawada', 'vijayawadda', 'vijaywada', 'bangalore', 'bengaluru', 'chennai', 'mumbai', 'pune', 'delhi', 'jaipur', 'tirupati', 'tirupathi', 'visakhapatnam', 'vizag', 'kadapa', 'anantapur', 'ananthapuram', 'ananthapur', 'anantapuram', 'cuddapah'];
+  const cities = Object.keys(cityAliases);
   
   // Find all city matches with their character position in user's message
   const cityMatches = [];

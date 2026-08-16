@@ -15,87 +15,15 @@ const crypto = require('crypto');
 const { sendBookingConfirmationEmail } = require('../../../services/emailService');
 const llm = require('../llmService');
 
-const CITY_ALIASES = {
-  bengaluru: 'bangalore',
-  bangalore: 'bangalore',
-  tirupathi: 'tirupati',
-  tirupati: 'tirupati',
-  vizag: 'visakhapatnam',
-  visakhapatnam: 'visakhapatnam',
-  bombay: 'mumbai',
-  mumbai: 'mumbai',
-  madras: 'chennai',
-  chennai: 'chennai',
-  vijayawadda: 'vijayawada',
-  vijaywada: 'vijayawada',
-  vijayawada: 'vijayawada',
-  ananthapuram: 'anantapur',
-  ananthapur: 'anantapur',
-  anantapuram: 'anantapur',
-  anantapur: 'anantapur',
-  cuddapah: 'kadapa',
-  kadapa: 'kadapa'
-};
-
-function getCityVariants(city) {
-  if (!city) return [];
-  const raw = city.toString().trim().toLowerCase();
-  const normalized = CITY_ALIASES[raw] || raw;
-
-  const set = new Set([raw, normalized]);
-  if (normalized === 'anantapur' || raw.includes('ananth') || raw.includes('anant')) {
-    set.add('anantapur');
-    set.add('ananthapuram');
-    set.add('ananthapur');
-    set.add('anantapuram');
-  }
-  if (normalized === 'bangalore' || raw.includes('bengal')) {
-    set.add('bangalore');
-    set.add('bengaluru');
-  }
-  if (normalized === 'tirupati' || raw.includes('tirup')) {
-    set.add('tirupati');
-    set.add('tirupathi');
-  }
-  if (normalized === 'visakhapatnam' || raw === 'vizag') {
-    set.add('visakhapatnam');
-    set.add('vizag');
-  }
-  if (normalized === 'mumbai' || raw === 'bombay') {
-    set.add('mumbai');
-    set.add('bombay');
-  }
-  if (normalized === 'chennai' || raw === 'madras') {
-    set.add('chennai');
-    set.add('madras');
-  }
-  if (normalized === 'vijayawada' || raw.includes('vijay')) {
-    set.add('vijayawada');
-    set.add('vijayawadda');
-    set.add('vijaywada');
-  }
-  if (normalized === 'kadapa' || raw === 'cuddapah') {
-    set.add('kadapa');
-    set.add('cuddapah');
-  }
-  return Array.from(set);
-}
-
-function buildCityMatchClause(columnName, city) {
-  const variants = getCityVariants(city);
-  if (variants.length === 0) return { sql: '1=1', params: [] };
-  const clauses = variants.map(() => `LOWER(${columnName}) LIKE ?`);
-  const params = variants.map(v => `%${v}%`);
-  return {
-    sql: `(${clauses.join(' OR ')})`,
-    params
-  };
-}
+const {
+  CITY_ALIASES,
+  normalizeCity,
+  getCityVariants,
+  buildCityMatchClause
+} = require('../../../utils/cityUtils');
 
 function normalizeCityName(city) {
-  if (!city) return '';
-  const normalized = city.toString().trim().toLowerCase();
-  return CITY_ALIASES[normalized] || normalized;
+  return normalizeCity(city);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════

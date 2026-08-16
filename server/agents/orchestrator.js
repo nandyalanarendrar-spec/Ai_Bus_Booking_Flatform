@@ -27,6 +27,7 @@
 const { dbRun } = require('./dbUtils');
 const { getGraphForTask } = require('./langgraph');
 const llmService = require('./langgraph/llmService');
+const { CITY_REGEX } = require('../utils/cityUtils');
 
 /**
  * Build execution plan based on task type (metadata only — used by the
@@ -265,7 +266,7 @@ function parseUserIntent(userMessage) {
   const isKnowledgeKeyword = /distance|how far|duration|how long|route.*available|what route|which route|price|cost|fare|minimum|maximum|cancel.*polic|refund.*polic|feature|agent|how.*work|what is|about|seat.*layout|tech|system|type.*bus|operator|schedule|timing|departure|best|better|unique|special|advantage|compare|comparison|usp|stand.*out|why.*choose|strength|highlight|impressive/.test(message);
 
   // City detection (moved up for early checks)
-  const hasCityName = /hyderabad|vijayawada|vijayawadda|vijaywada|bangalore|chennai|mumbai|pune|delhi|jaipur|tirupati|tirupathi|visakhapatnam|vizag|kadapa|anantapur|ananthapuram|ananthapur|anantapuram|cuddapah/i.test(normalizedMessage);
+  const hasCityName = CITY_REGEX.test(normalizedMessage);
   const hasTravelContext = /from.*to|bus.*from|bus.*to|travel|journey|trip/.test(normalizedMessage);
 
   // ════════════════════════════════════════════════════════════════════════════

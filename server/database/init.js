@@ -463,13 +463,59 @@ function fixForeignKeyCascades(done) {
         if (typeof done === 'function') done();
       }
     });
-  });
-}
-
 function runMigrations() {
   console.log('🔄 Running database migrations...');
   fixForeignKeyCascades();
-  
+
+  // Deduplicate routes and schedules, and add unique constraints/indices
+  db.serialize(() => {
+    console.log('🧹 Purging duplicate routes and schedules from Neon PostgreSQL...');
+    
+    // 1. Delete duplicate route rows (keeping the lowest ID)
+    db.run(`
+      DELETE FROM routes 
+      WHERE id NOT IN (
+        SELECT MIN(id) 
+        FROM routes 
+        GROUP BY LOWER(from_city), LOWER(to_city)
+      )
+    `, (err) => {
+      if (err) console.error('Error deduplicating routes:', err);
+      else console.log('✅ Route rows deduplicated.');
+      
+      // 2. Add unique index on routes (LOWER(from_city), LOWER(to_city))
+      db.run(`
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_unique_routes_cities 
+        ON routes (LOWER(from_city), LOWER(to_city))
+      `, (err) => {
+        if (err) console.error('Error creating route unique index:', err);
+        else console.log('✅ Route unique index verified.');
+      });
+    });
+
+    // 3. Delete duplicate schedule rows
+    db.run(`
+      DELETE FROM schedules 
+      WHERE id NOT IN (
+        SELECT MIN(id) 
+        FROM schedules 
+        GROUP BY route_id, bus_id, travel_date, departure_time
+      )
+    `, (err) => {
+      if (err) console.error('Error deduplicating schedules:', err);
+      else console.log('✅ Schedule rows deduplicated.');
+
+      // 4. Add unique index on schedules (route_id, bus_id, travel_date, departure_time)
+      db.run(`
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_unique_schedules_times 
+        ON schedules (route_id, bus_id, travel_date, departure_time)
+      `, (err) => {
+        if (err) console.error('Error creating schedule unique index:', err);
+        else console.log('✅ Schedule unique index verified.');
+      });
+    });
+  });
+
   // Migration: Add booking_group_id to bookings table if it doesn't exist
   db.all(`
     SELECT column_name AS name
@@ -486,12 +532,12 @@ function runMigrations() {
     const hasBookingGroupId = columns.some(col => col.name === 'booking_group_id');
     
     if (!hasBookingGroupId) {
-      console.log('  âž• Adding booking_group_id column to bookings table...');
+      console.log('  ➕ Adding booking_group_id column to bookings table...');
       db.run('ALTER TABLE bookings ADD COLUMN booking_group_id TEXT', (err) => {
         if (err) {
-          console.error('  âŒ Failed to add booking_group_id column:', err);
+          console.error('  ❌ Failed to add booking_group_id column:', err);
         } else {
-          console.log('  âœ… booking_group_id column added successfully');
+          console.log('  ✅ booking_group_id column added successfully');
         }
         runBusesMigration();
       });
@@ -956,6 +1002,7 @@ function ensureKadapaAnantapurSchedulesSeeded(callback) {
             const stmt = db.prepare(`
               INSERT INTO schedules (route_id, bus_id, departure_time, arrival_time, base_price, available_seats, travel_date, is_daily_service)
               VALUES (?, ?, ?, ?, ?, ?, ?, 1)
+              ON CONFLICT (route_id, bus_id, travel_date, departure_time) DO NOTHING
             `);
 
             db.serialize(() => {
@@ -985,61 +1032,8 @@ function ensureKadapaAnantapurSchedulesSeeded(callback) {
 }
 
 async function deleteAnantapurAndRoutes(callback) {
-  try {
-    const targetCities = ['anantapur', 'ananthapuram', 'ananthapur', 'anantapuram'];
-
-    // 1. Insert tombstones in deleted_places
-    for (const city of targetCities) {
-      await new Promise(res => db.run('INSERT INTO deleted_places (name) VALUES (?) ON CONFLICT (name) DO NOTHING', [city], () => res()));
-    }
-
-    // 2. Delete seat locks
-    await new Promise(res => db.run(`
-      DELETE FROM seat_locks 
-      WHERE schedule_id IN (
-        SELECT s.id FROM schedules s 
-        JOIN routes r ON s.route_id = r.id 
-        WHERE LOWER(r.from_city) LIKE '%ananta%' OR LOWER(r.to_city) LIKE '%ananta%'
-      )
-    `, [], () => res()));
-
-    // 3. Delete bookings
-    await new Promise(res => db.run(`
-      DELETE FROM bookings 
-      WHERE schedule_id IN (
-        SELECT s.id FROM schedules s 
-        JOIN routes r ON s.route_id = r.id 
-        WHERE LOWER(r.from_city) LIKE '%ananta%' OR LOWER(r.to_city) LIKE '%ananta%'
-      )
-    `, [], () => res()));
-
-    // 4. Delete schedules
-    await new Promise(res => db.run(`
-      DELETE FROM schedules 
-      WHERE route_id IN (
-        SELECT r.id FROM routes r 
-        WHERE LOWER(r.from_city) LIKE '%ananta%' OR LOWER(r.to_city) LIKE '%ananta%'
-      )
-    `, [], () => res()));
-
-    // 5. Delete routes
-    await new Promise(res => db.run(`
-      DELETE FROM routes 
-      WHERE LOWER(from_city) LIKE '%ananta%' OR LOWER(to_city) LIKE '%ananta%'
-    `, [], () => res()));
-
-    // 6. Delete places
-    await new Promise(res => db.run(`
-      DELETE FROM places 
-      WHERE LOWER(name) LIKE '%ananta%'
-    `, [], () => res()));
-
-    console.log('✅ Anantapur / Ananthapuram city, routes, schedules, and places successfully purged from Neon PostgreSQL!');
-  } catch (err) {
-    console.error('Error purging Anantapur:', err);
-  } finally {
-    if (typeof callback === 'function') callback();
-  }
+  console.log('ℹ️ deleteAnantapurAndRoutes() bypassed to preserve Anantapur/Ananthapuram routes.');
+  if (typeof callback === 'function') callback();
 }
 
 function seedData() {
@@ -1074,7 +1068,7 @@ function seedData() {
     
     db.serialize(() => {
       // Seed routes (complete network: every city to every other city)
-      const cities = ['Hyderabad', 'Vijayawada', 'Bangalore', 'Chennai', 'Mumbai', 'Pune', 'Delhi', 'Jaipur', 'Tirupati', 'Kadapa', 'Anantapur', 'Visakhapatnam', 'Kochi'];
+      const cities = ['Hyderabad', 'Vijayawada', 'Bangalore', 'Chennai', 'Mumbai', 'Pune', 'Delhi', 'Jaipur', 'Tirupati', 'Kadapa', 'Anantapur', 'Ananthapuram', 'Visakhapatnam', 'Kochi', 'Bhimavaram', 'Kurnool', 'Amalapuram', 'Goa'];
       const distances = {
         'Hyderabad-Vijayawada': [275, 5.5],
         'Hyderabad-Bangalore': [575, 10],
@@ -1086,6 +1080,7 @@ function seedData() {
         'Hyderabad-Tirupati': [555, 9.5],
         'Hyderabad-Kadapa': [410, 7.5],
         'Hyderabad-Anantapur': [360, 6.5],
+        'Hyderabad-Ananthapuram': [360, 6.5],
         'Hyderabad-Visakhapatnam': [620, 11.5],
         'Vijayawada-Bangalore': [650, 11],
         'Vijayawada-Chennai': [430, 7.5],
@@ -1096,6 +1091,7 @@ function seedData() {
         'Vijayawada-Tirupati': [320, 6],
         'Vijayawada-Kadapa': [370, 7.0],
         'Vijayawada-Anantapur': [480, 8.5],
+        'Vijayawada-Ananthapuram': [480, 8.5],
         'Vijayawada-Visakhapatnam': [350, 6.0],
         'Bangalore-Chennai': [350, 6.5],
         'Bangalore-Mumbai': [985, 17],
@@ -1105,6 +1101,7 @@ function seedData() {
         'Bangalore-Tirupati': [255, 5],
         'Bangalore-Kadapa': [250, 5.0],
         'Bangalore-Anantapur': [215, 4.0],
+        'Bangalore-Ananthapuram': [215, 4.0],
         'Chennai-Mumbai': [1335, 22],
         'Chennai-Pune': [1185, 20],
         'Chennai-Delhi': [2180, 36],
@@ -1122,8 +1119,24 @@ function seedData() {
         'Delhi-Tirupati': [2050, 34],
         'Jaipur-Tirupati': [1920, 32],
         'Kadapa-Anantapur': [145, 3.0],
+        'Kadapa-Ananthapuram': [145, 3.0],
         'Kadapa-Tirupati': [140, 3.0],
-        'Anantapur-Tirupati': [280, 5.5]
+        'Anantapur-Tirupati': [280, 5.5],
+        'Ananthapuram-Tirupati': [280, 5.5],
+        // New routes mapping Bhimavaram, Kurnool, Amalapuram, Goa
+        'Anantapur-Bhimavaram': [450, 9.0],
+        'Ananthapuram-Bhimavaram': [450, 9.0],
+        'Bhimavaram-Vijayawada': [120, 2.5],
+        'Bhimavaram-Hyderabad': [390, 7.5],
+        'Bhimavaram-Bangalore': [680, 12.0],
+        'Bhimavaram-Visakhapatnam': [260, 5.0],
+        'Kurnool-Hyderabad': [210, 3.5],
+        'Kurnool-Bangalore': [360, 6.0],
+        'Kurnool-Anantapur': [150, 2.5],
+        'Kurnool-Ananthapuram': [150, 2.5],
+        'Amalapuram-Vijayawada': [180, 3.5],
+        'Amalapuram-Visakhapatnam': [220, 4.5],
+        'Amalapuram-Hyderabad': [450, 9.0]
       };
       
       const routesData = [];
@@ -1142,7 +1155,11 @@ function seedData() {
         }
       }
       
-      const routeStmt = db.prepare('INSERT INTO routes (from_city, to_city, distance_km, duration_hours) VALUES (?, ?, ?, ?)');
+      const routeStmt = db.prepare(`
+        INSERT INTO routes (from_city, to_city, distance_km, duration_hours) 
+        VALUES (?, ?, ?, ?)
+        ON CONFLICT (LOWER(from_city), LOWER(to_city)) DO NOTHING
+      `);
       routesData.forEach(route => routeStmt.run(...route));
       routeStmt.finalize();
       
@@ -1331,7 +1348,7 @@ function generateSchedulesForDateRange(routesData, startDayOffset, endDayOffset)
           ? dbBuses.map(b => b.id)
           : [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25];
 
-        const scheduleStmt = db.prepare('INSERT INTO schedules (route_id, bus_id, departure_time, arrival_time, base_price, available_seats, travel_date) VALUES (?, ?, ?, ?, ?, ?, ?)');
+        const scheduleStmt = db.prepare('INSERT INTO schedules (route_id, bus_id, departure_time, arrival_time, base_price, available_seats, travel_date) VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT (route_id, bus_id, travel_date, departure_time) DO NOTHING');
         const today = new Date();
         let scheduleCount = 0;
 
@@ -1396,7 +1413,7 @@ function addSchedulesForDate(routesData, dateStr, targetRouteId = null) {
           db.all('SELECT route_id, bus_id, departure_time FROM schedules WHERE travel_date = ?', [dateStr], (existErr, existSchedules) => {
             const existingSet = new Set((existSchedules || []).map(s => `${s.route_id}_${s.bus_id}_${s.departure_time}`));
             let scheduleCount = 0;
-            const scheduleStmt = db.prepare('INSERT INTO schedules (route_id, bus_id, departure_time, arrival_time, base_price, available_seats, travel_date) VALUES (?, ?, ?, ?, ?, ?, ?)');
+            const scheduleStmt = db.prepare('INSERT INTO schedules (route_id, bus_id, departure_time, arrival_time, base_price, available_seats, travel_date) VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT (route_id, bus_id, travel_date, departure_time) DO NOTHING');
 
             for (let routeIdx = 0; routeIdx < dbRoutes.length; routeIdx++) {
               const route = dbRoutes[routeIdx];
@@ -1665,61 +1682,67 @@ function performDailyCleanupWithData(routesData, todayStr, day35Str) {
           const totalChecks = requiredDates.length;
           let totalAddedSchedules = 0;
 
-          requiredDates.forEach(dateStr => {
-            // Find which routes already have schedules on this date
-            db.all('SELECT DISTINCT route_id FROM schedules WHERE travel_date = ?', [dateStr], async (err, resultRows) => {
-              checkCompleted++;
-              const routesWithSchedules = new Set((resultRows || []).map(r => Number(r.route_id)));
-              const missingRouteIds = allRouteIds.filter(id => !routesWithSchedules.has(id));
-
-              if (missingRouteIds.length > 0) {
-                for (const mRouteId of missingRouteIds) {
-                  const added = await addSchedulesForDate(routesData, dateStr, mRouteId);
-                  totalAddedSchedules += added;
-                }
-              }
-
-              // When all checks are done, run final verification
-              if (checkCompleted === totalChecks) {
-                if (totalAddedSchedules === 0) {
-                  console.log('✅ All 35 days fully populated for all routes - no schedule gaps found!');
-                } else {
-                  console.log(`✅ Filled a total of ${totalAddedSchedules} missing route schedule(s) across 35 days.`);
-                }
-                
-                // Final verification
-                setTimeout(() => {
-                  db.get(`
-                    SELECT 
-                      MIN(travel_date) as first_date,
-                      MAX(travel_date) as last_date,
-                      COUNT(DISTINCT travel_date) as total_days,
-                      COUNT(*) as total_schedules
-                    FROM schedules
-                  `, (err, final) => {
-                    if (!err && final) {
-                      console.log('');
-                      console.log('📊 AFTER CLEANUP:');
-                      console.log(`   First date: ${final.first_date} (should be ${todayStr})`);
-                      console.log(`   Last date: ${final.last_date} (should be ${day35Str})`);
-                      console.log(`   Total days: ${final.total_days}`);
-                      console.log(`   Total schedules: ${final.total_schedules}`);
-                      console.log('');
-                      
-                      // Verify we have at least 35 days
-                      if (Number(final.total_days) >= 35 && final.first_date === todayStr) {
-                        console.log('✅ SUCCESS: 35 days maintained! (' + todayStr + ' to ' + day35Str + ')');
-                      } else {
-                        console.log(`⚠️  WARNING: Expected 35 days, but found ${final.total_days} days`);
-                      }
-                      console.log('================================================================================');
-                      console.log('');
-                    }
+          let totalAddedSchedules = 0;
+          
+          (async () => {
+            for (const dateStr of requiredDates) {
+              try {
+                const resultRows = await new Promise((res, rej) => {
+                  db.all('SELECT DISTINCT route_id FROM schedules WHERE travel_date = ?', [dateStr], (err, rows) => {
+                    if (err) rej(err); else res(rows || []);
                   });
-                }, 1000);
+                });
+                const routesWithSchedules = new Set(resultRows.map(r => Number(r.route_id)));
+                const missingRouteIds = allRouteIds.filter(id => !routesWithSchedules.has(id));
+
+                if (missingRouteIds.length > 0) {
+                  for (const mRouteId of missingRouteIds) {
+                    const added = await addSchedulesForDate(routesData, dateStr, mRouteId);
+                    totalAddedSchedules += added;
+                  }
+                }
+              } catch (err) {
+                console.error(`Error populating schedules for date ${dateStr}:`, err);
               }
-            });
-          });
+            }
+
+            if (totalAddedSchedules === 0) {
+              console.log('✅ All 35 days fully populated for all routes - no schedule gaps found!');
+            } else {
+              console.log(`✅ Filled a total of ${totalAddedSchedules} missing route schedule(s) across 35 days.`);
+            }
+            
+            // Final verification
+            setTimeout(() => {
+              db.get(`
+                SELECT 
+                  MIN(travel_date) as first_date,
+                  MAX(travel_date) as last_date,
+                  COUNT(DISTINCT travel_date) as total_days,
+                  COUNT(*) as total_schedules
+                FROM schedules
+              `, (err, final) => {
+                if (!err && final) {
+                  console.log('');
+                  console.log('📊 AFTER CLEANUP:');
+                  console.log(`   First date: ${final.first_date} (should be ${todayStr})`);
+                  console.log(`   Last date: ${final.last_date} (should be ${day35Str})`);
+                  console.log(`   Total days: ${final.total_days}`);
+                  console.log(`   Total schedules: ${final.total_schedules}`);
+                  console.log('');
+                  
+                  // Verify we have at least 35 days
+                  if (Number(final.total_days) >= 35 && final.first_date === todayStr) {
+                    console.log('✅ SUCCESS: 35 days maintained! (' + todayStr + ' to ' + day35Str + ')');
+                  } else {
+                    console.log(`⚠️  WARNING: Expected 35 days, but found ${final.total_days} days`);
+                  }
+                  console.log('================================================================================');
+                  console.log('');
+                }
+              });
+            }, 1000);
+          })();
         });
       });
     });
