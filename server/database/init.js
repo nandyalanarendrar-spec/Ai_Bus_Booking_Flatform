@@ -1493,38 +1493,38 @@ function applyDataVariationMigrations(done) {
   });
 }
 
-// Cleanup old schedules and bookings, add new schedules for day 31
+// Cleanup old schedules and bookings, add new schedules for 35-day window
 function performDailyCleanup(routesData) {
   const { getLocalDateString, getOffsetLocalDateString } = require('../utils/dateUtils');
   const today = new Date();
   const todayStr = getLocalDateString();
-  const day30Str = getOffsetLocalDateString(29);
+  const day35Str = getOffsetLocalDateString(34);
   
   console.log(`🧹 Daily cleanup running...`);
   console.log(`   📅 Local system date: ${todayStr} (${today.toLocaleString()})`);
   console.log(`   🗑️  Deleting all dates before: ${todayStr}`);
-  console.log(`   ➕ Will ensure day 30 exists: ${day30Str}`);
+  console.log(`   ➕ Will ensure day 35 exists: ${day35Str}`);
   
   // If routesData not provided, query from database
   if (!routesData) {
     db.all('SELECT from_city, to_city, distance_km, duration_hours FROM routes', (err, routes) => {
       if (err) {
-        console.error('âŒ Error querying routes for cleanup:', err);
+        console.error('❌ Error querying routes for cleanup:', err);
         return;
       }
       const routesDataFromDb = routes.map(r => [r.from_city, r.to_city, r.distance_km, r.duration_hours]);
-      performDailyCleanupWithData(routesDataFromDb, todayStr, day30Str);
+      performDailyCleanupWithData(routesDataFromDb, todayStr, day35Str);
     });
   } else {
-    performDailyCleanupWithData(routesData, todayStr, day30Str);
+    performDailyCleanupWithData(routesData, todayStr, day35Str);
   }
 }
 
-function performDailyCleanupWithData(routesData, todayStr, day30Str) {
+function performDailyCleanupWithData(routesData, todayStr, day35Str) {
   console.log('');
-  console.log('â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•');
-  console.log('ðŸ—“ï¸  DAILY CLEANUP PROCESS');
-  console.log('â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•');
+  console.log('================================================================================');
+  console.log('📅 DAILY CLEANUP PROCESS');
+  console.log('================================================================================');
   
   // First, check current date range in database
   db.get(`
@@ -1536,30 +1536,30 @@ function performDailyCleanupWithData(routesData, todayStr, day30Str) {
     FROM schedules
   `, (err, current) => {
     if (!err && current && current.total_schedules > 0) {
-      console.log('ðŸ“Š BEFORE CLEANUP:');
+      console.log('📊 BEFORE CLEANUP:');
       console.log(`   First date: ${current.first_date}`);
       console.log(`   Last date: ${current.last_date}`);
       console.log(`   Total days: ${current.total_days}`);
       console.log(`   Total schedules: ${current.total_schedules}`);
     } else {
-      console.log('ðŸ“Š Database is empty or error occurred');
+      console.log('📊 Database is empty or error occurred');
     }
     
     // Check what dates will be deleted
     db.all('SELECT DISTINCT travel_date FROM schedules WHERE travel_date < ? ORDER BY travel_date', [todayStr], (err, oldDates) => {
       if (err) {
-        console.error('âŒ Error checking old dates:', err);
+        console.error('❌ Error checking old dates:', err);
         return;
       }
       
       console.log('');
-      console.log('ðŸ” CLEANUP TARGETS:');
+      console.log('🔍 CLEANUP TARGETS:');
       if (oldDates && oldDates.length > 0) {
-        console.log(`   âŒ Dates to DELETE: ${oldDates.map(d => d.travel_date).join(', ')}`);
+        console.log(`   ❌ Dates to DELETE: ${oldDates.map(d => d.travel_date).join(', ')}`);
       } else {
-        console.log(`   âœ… No old dates to delete (all dates >= ${todayStr})`);
+        console.log(`   ✅ No old dates to delete (all dates >= ${todayStr})`);
       }
-      console.log(`   âž• Date to ADD (if missing): ${day30Str} (day 30 from today)`);
+      console.log(`   ➕ Date to ADD (if missing): ${day35Str} (day 35 from today)`);
       console.log('');
       
       // Perform the actual cleanup
@@ -1572,18 +1572,18 @@ function performDailyCleanupWithData(routesData, todayStr, day30Str) {
           )
         `, [todayStr], function(err) {
           if (err) {
-            console.error('âŒ Error deleting old bookings:', err);
+            console.error('❌ Error deleting old bookings:', err);
           } else if (this.changes > 0) {
-            console.log(`âœ… Deleted ${this.changes} old booking(s)`);
+            console.log(`✅ Deleted ${this.changes} old booking(s)`);
           }
         });
         
         // Delete old seat locks
         db.run('DELETE FROM seat_locks WHERE expires_at < CURRENT_TIMESTAMP AT TIME ZONE \'UTC\'', function(err) {
           if (err) {
-            console.error('âŒ Error deleting expired seat locks:', err);
+            console.error('❌ Error deleting expired seat locks:', err);
           } else if (this.changes > 0) {
-            console.log(`âœ… Deleted ${this.changes} expired seat lock(s)`);
+            console.log(`✅ Deleted ${this.changes} expired seat lock(s)`);
           }
         });
         
@@ -1619,16 +1619,16 @@ function performDailyCleanupWithData(routesData, todayStr, day30Str) {
           }
         });
         
-        // Ensure ALL 30 days exist for ALL active routes (fill any gaps per route)
+        // Ensure ALL 35 days exist for ALL active routes (fill any gaps per route)
         console.log('');
-        console.log('🔍 Checking for missing route schedules in 30-day window...');
+        console.log('🔍 Checking for missing route schedules in 35-day window...');
         
         const today = new Date();
         const { getOffsetLocalDateString } = require('../utils/dateUtils');
         const requiredDates = [];
         
-        // Generate all 30 dates that should exist
-        for (let dayOffset = 0; dayOffset < 30; dayOffset++) {
+        // Generate all 35 dates that should exist
+        for (let dayOffset = 0; dayOffset < 35; dayOffset++) {
           requiredDates.push(getOffsetLocalDateString(dayOffset));
         }
         
@@ -1658,9 +1658,9 @@ function performDailyCleanupWithData(routesData, todayStr, day30Str) {
               // When all checks are done, run final verification
               if (checkCompleted === totalChecks) {
                 if (totalAddedSchedules === 0) {
-                  console.log('✅ All 30 days fully populated for all routes - no schedule gaps found!');
+                  console.log('✅ All 35 days fully populated for all routes - no schedule gaps found!');
                 } else {
-                  console.log(`✅ Filled a total of ${totalAddedSchedules} missing route schedule(s) across 30 days.`);
+                  console.log(`✅ Filled a total of ${totalAddedSchedules} missing route schedule(s) across 35 days.`);
                 }
                 
                 // Final verification
@@ -1677,18 +1677,16 @@ function performDailyCleanupWithData(routesData, todayStr, day30Str) {
                       console.log('');
                       console.log('📊 AFTER CLEANUP:');
                       console.log(`   First date: ${final.first_date} (should be ${todayStr})`);
-                      console.log(`   Last date: ${final.last_date} (should be ${day30Str})`);
+                      console.log(`   Last date: ${final.last_date} (should be ${day35Str})`);
                       console.log(`   Total days: ${final.total_days}`);
                       console.log(`   Total schedules: ${final.total_schedules}`);
                       console.log('');
                       
-                      // Verify we have exactly 30 days
-                      if (Number(final.total_days) === 30 && final.first_date === todayStr && final.last_date === day30Str) {
-                        console.log('✅ SUCCESS: Exactly 30 days maintained! (' + todayStr + ' to ' + day30Str + ')');
-                      } else if (Number(final.total_days) === 30) {
-                        console.log('✅ SUCCESS: Exactly 30 days maintained!');
+                      // Verify we have at least 35 days
+                      if (Number(final.total_days) >= 35 && final.first_date === todayStr) {
+                        console.log('✅ SUCCESS: 35 days maintained! (' + todayStr + ' to ' + day35Str + ')');
                       } else {
-                        console.log(`⚠️  WARNING: Expected 30 days, but found ${final.total_days} days`);
+                        console.log(`⚠️  WARNING: Expected 35 days, but found ${final.total_days} days`);
                       }
                       console.log('================================================================================');
                       console.log('');

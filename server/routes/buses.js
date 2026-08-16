@@ -160,7 +160,10 @@ router.post('/search', (req, res) => {
     vijaywada: 'vijayawada',
     vijayawadda: 'vijayawada',
     tirupathi: 'tirupati',
-    vizag: 'visakhapatnam'
+    vizag: 'visakhapatnam',
+    puni: 'pune',
+    poona: 'pune',
+    bombay: 'mumbai'
   };
 
   const fromNorm = CITY_ALIASES[fromCity.toLowerCase().trim()] || fromCity.toLowerCase().trim();
