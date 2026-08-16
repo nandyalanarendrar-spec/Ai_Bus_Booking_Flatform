@@ -463,6 +463,9 @@ function fixForeignKeyCascades(done) {
         if (typeof done === 'function') done();
       }
     });
+  });
+}
+
 function runMigrations() {
   console.log('🔄 Running database migrations...');
   fixForeignKeyCascades();
