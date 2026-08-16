@@ -27,6 +27,94 @@ function getTransporter() {
     greetingTimeout: 20000,
     socketTimeout: 25000
   });
+const https = require('https');
+
+/**
+ * Send transactional email over HTTPS REST API (bypasses Render outbound TCP port blocks)
+ */
+async function sendEmailViaHttpsApi(toEmail, subject, htmlContent) {
+  // Option 1: Resend HTTP API (https://resend.com)
+  if (process.env.RESEND_API_KEY) {
+    const postData = JSON.stringify({
+      from: 'Public Bus Booking <onboarding@resend.dev>',
+      to: [toEmail],
+      subject: subject,
+      html: htmlContent
+    });
+
+    return new Promise((resolve, reject) => {
+      const req = https.request({
+        hostname: 'api.resend.com',
+        path: '/emails',
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${process.env.RESEND_API_KEY.trim()}`,
+          'Content-Type': 'application/json',
+          'Content-Length': Buffer.byteLength(postData)
+        },
+        timeout: 10000
+      }, (res) => {
+        let data = '';
+        res.on('data', chunk => data += chunk);
+        res.on('end', () => {
+          if (res.statusCode >= 200 && res.statusCode < 300) {
+            console.log(`📧 Email sent via Resend HTTPS API to ${toEmail}`);
+            resolve({ success: true, provider: 'Resend HTTPS', data });
+          } else {
+            console.error(`❌ Resend HTTP error ${res.statusCode}:`, data);
+            reject(new Error(`Resend API HTTP ${res.statusCode}: ${data}`));
+          }
+        });
+      });
+      req.on('error', err => reject(err));
+      req.on('timeout', () => { req.destroy(); reject(new Error('Resend HTTPS request timeout')); });
+      req.write(postData);
+      req.end();
+    });
+  }
+
+  // Option 2: Brevo HTTP API (https://brevo.com)
+  if (process.env.BREVO_API_KEY) {
+    const senderEmail = (process.env.EMAIL_USER || 'nnrreddy.123456789@gmail.com').trim();
+    const postData = JSON.stringify({
+      sender: { name: 'Public Bus Booking', email: senderEmail },
+      to: [{ email: toEmail }],
+      subject: subject,
+      htmlContent: htmlContent
+    });
+
+    return new Promise((resolve, reject) => {
+      const req = https.request({
+        hostname: 'api.brevo.com',
+        path: '/v3/smtp/email',
+        method: 'POST',
+        headers: {
+          'api-key': process.env.BREVO_API_KEY.trim(),
+          'Content-Type': 'application/json',
+          'Content-Length': Buffer.byteLength(postData)
+        },
+        timeout: 10000
+      }, (res) => {
+        let data = '';
+        res.on('data', chunk => data += chunk);
+        res.on('end', () => {
+          if (res.statusCode >= 200 && res.statusCode < 300) {
+            console.log(`📧 Email sent via Brevo HTTPS API to ${toEmail}`);
+            resolve({ success: true, provider: 'Brevo HTTPS', data });
+          } else {
+            console.error(`❌ Brevo HTTP error ${res.statusCode}:`, data);
+            reject(new Error(`Brevo API HTTP ${res.statusCode}: ${data}`));
+          }
+        });
+      });
+      req.on('error', err => reject(err));
+      req.on('timeout', () => { req.destroy(); reject(new Error('Brevo HTTPS request timeout')); });
+      req.write(postData);
+      req.end();
+    });
+  }
+
+  return null;
 }
 
 // Verify transporter configuration on startup
@@ -50,62 +138,74 @@ try {
  */
 async function sendOTPEmail(email, otp) {
   const user = (process.env.EMAIL_USER || 'nnrreddy.123456789@gmail.com').trim();
-  const transporter = getTransporter();
+  const htmlContent = `
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <style>
+        body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
+        .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+        .header { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 30px; text-align: center; border-radius: 10px 10px 0 0; }
+        .content { background: #f9f9f9; padding: 30px; border-radius: 0 0 10px 10px; }
+        .otp-box { background: white; border: 2px dashed #667eea; border-radius: 8px; padding: 20px; text-align: center; margin: 20px 0; }
+        .otp-code { font-size: 36px; font-weight: bold; color: #667eea; letter-spacing: 8px; margin: 10px 0; }
+        .info { background: #e3f2fd; border-left: 4px solid #2196f3; padding: 15px; margin: 20px 0; }
+        .warning { color: #d32f2f; font-weight: bold; }
+        .footer { text-align: center; margin-top: 20px; color: #666; font-size: 12px; }
+      </style>
+    </head>
+    <body>
+      <div class="container">
+        <div class="header">
+          <h1>🔐 Email Verification</h1>
+        </div>
+        <div class="content">
+          <h2>Welcome to Public Bus Booking!</h2>
+          <p>Thank you for registering. Please verify your email address to complete your registration.</p>
+          
+          <div class="otp-box">
+            <p style="margin: 0; color: #666;">Enter this code to verify your email:</p>
+            <div class="otp-code">${otp}</div>
+          </div>
+          
+          <div class="info">
+            <strong>⏰ Validity:</strong> This code will expire in <strong>5 minutes</strong><br>
+            <strong>🎯 Purpose:</strong> Email verification for account activation<br>
+            <strong>🔒 Security:</strong> This is a one-time use code
+          </div>
+          
+          <p class="warning">⚠️ If you didn't create an account, please ignore this email.</p>
+          
+          <p style="margin-top: 20px; color: #666;">
+            For security reasons, do not share this code with anyone. Our team will never ask for your verification code.
+          </p>
+        </div>
+        <div class="footer">
+          <p>Public Bus Booking - Your Travel Partner</p>
+          <p>This is an automated email. Please do not reply.</p>
+        </div>
+      </div>
+    </body>
+    </html>
+  `;
 
+  // Try HTTPS REST API first (Resend / Brevo) to bypass Render TCP firewall restrictions
+  try {
+    const httpResult = await sendEmailViaHttpsApi(email, 'Email Verification - Public Bus Booking', htmlContent);
+    if (httpResult && httpResult.success) {
+      return true;
+    }
+  } catch (httpErr) {
+    console.warn('⚠️ HTTPS email API failed, falling back to Nodemailer SMTP:', httpErr.message);
+  }
+
+  // Fallback to Nodemailer SMTP
+  const transporter = getTransporter();
   const mailOptions = {
     from: `"Public Bus Booking" <${user}>`,
     to: email,
     subject: 'Email Verification - Public Bus Booking',
-    html: `
-      <!DOCTYPE html>
-      <html>
-      <head>
-        <style>
-          body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
-          .container { max-width: 600px; margin: 0 auto; padding: 20px; }
-          .header { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 30px; text-align: center; border-radius: 10px 10px 0 0; }
-          .content { background: #f9f9f9; padding: 30px; border-radius: 0 0 10px 10px; }
-          .otp-box { background: white; border: 2px dashed #667eea; border-radius: 8px; padding: 20px; text-align: center; margin: 20px 0; }
-          .otp-code { font-size: 36px; font-weight: bold; color: #667eea; letter-spacing: 8px; margin: 10px 0; }
-          .info { background: #e3f2fd; border-left: 4px solid #2196f3; padding: 15px; margin: 20px 0; }
-          .warning { color: #d32f2f; font-weight: bold; }
-          .footer { text-align: center; margin-top: 20px; color: #666; font-size: 12px; }
-        </style>
-      </head>
-      <body>
-        <div class="container">
-          <div class="header">
-            <h1>🔐 Email Verification</h1>
-          </div>
-          <div class="content">
-            <h2>Welcome to Public Bus Booking!</h2>
-            <p>Thank you for registering. Please verify your email address to complete your registration.</p>
-            
-            <div class="otp-box">
-              <p style="margin: 0; color: #666;">Enter this code to verify your email:</p>
-              <div class="otp-code">${otp}</div>
-            </div>
-            
-            <div class="info">
-              <strong>⏰ Validity:</strong> This code will expire in <strong>5 minutes</strong><br>
-              <strong>🎯 Purpose:</strong> Email verification for account activation<br>
-              <strong>🔒 Security:</strong> This is a one-time use code
-            </div>
-            
-            <p class="warning">⚠️ If you didn't create an account, please ignore this email.</p>
-            
-            <p style="margin-top: 20px; color: #666;">
-              For security reasons, do not share this code with anyone. Our team will never ask for your verification code.
-            </p>
-          </div>
-          <div class="footer">
-            <p>Public Bus Booking - Your Travel Partner</p>
-            <p>This is an automated email. Please do not reply.</p>
-          </div>
-        </div>
-      </body>
-      </html>
-    `
+    html: htmlContent
   };
 
   try {
@@ -124,13 +224,23 @@ async function sendOTPEmail(email, otp) {
  */
 async function testSendOTPEmail(email, otp = '123456') {
   const user = (process.env.EMAIL_USER || 'nnrreddy.123456789@gmail.com').trim();
-  const transporter = getTransporter();
+  const htmlContent = `<h2>Verification Code Test: <strong>${otp}</strong></h2>`;
 
+  try {
+    const httpResult = await sendEmailViaHttpsApi(email, 'Test Verification Email - Public Bus Booking', htmlContent);
+    if (httpResult && httpResult.success) {
+      return { success: true, messageId: 'HTTPS_REST_API', response: httpResult.provider };
+    }
+  } catch (httpErr) {
+    console.warn('⚠️ Diagnostic HTTPS email failed:', httpErr.message);
+  }
+
+  const transporter = getTransporter();
   const mailOptions = {
     from: `"Public Bus Booking" <${user}>`,
     to: email,
     subject: 'Test Verification Email - Public Bus Booking',
-    html: `<h2>Verification Code Test: <strong>${otp}</strong></h2>`
+    html: htmlContent
   };
 
   try {
