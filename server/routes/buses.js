@@ -222,27 +222,16 @@ router.post('/search', (req, res) => {
         console.log(`📅 Fetching schedules for route IDs [${routeIds.join(', ')}] on ${travelDate}`);
       }
       
-      // Get schedules
-      db.all(query, params, (err, schedules) => {
-        if (err) {
-          console.error('❌ Schedules query error:', err);
-          return res.status(500).json({ error: 'Search failed', buses: [] });
-        }
-        
+      // Function to structure and send schedule response
+      const handleSchedulesResult = (schedules) => {
         console.log(`✅ Found ${schedules?.length || 0} buses for routes [${routeIds.join(', ')}]`);
         
-        if (!schedules || schedules.length === 0) {
-          console.log('⚠️ No schedules available');
-        }
-        
-        // Add route_id and booking_allowed flag to each schedule
         const schedulesWithRoute = (schedules || []).map(s => ({
           ...s,
           route_id: s.route_id,
           booking_allowed: isBookingAllowed(s.travel_date, s.departure_time)
         }));
         
-        // Group by date if showing all dates
         let response;
         if (showAllDates || !travelDate) {
           const byDate = {};
@@ -263,6 +252,31 @@ router.post('/search', (req, res) => {
         }
         
         return res.json(response);
+      };
+
+      // Get schedules
+      db.all(query, params, (err, schedules) => {
+        if (err) {
+          console.error('❌ Schedules query error:', err);
+          return res.status(500).json({ error: 'Search failed', buses: [] });
+        }
+        
+        if ((!schedules || schedules.length === 0) && travelDate) {
+          console.log(`⚠️ No schedules found for routes [${routeIds.join(', ')}] on ${travelDate}. Running auto-generation cleanup check...`);
+          const { performDailyCleanup } = require('../database/init');
+          performDailyCleanup();
+          setTimeout(() => {
+            db.all(query, params, (retryErr, retrySchedules) => {
+              if (!retryErr && retrySchedules && retrySchedules.length > 0) {
+                console.log(`✅ Auto-generation check restored ${retrySchedules.length} schedules!`);
+                return handleSchedulesResult(retrySchedules);
+              }
+              return handleSchedulesResult(schedules || []);
+            });
+          }, 300);
+        } else {
+          return handleSchedulesResult(schedules);
+        }
       });
     }
   );

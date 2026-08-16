@@ -59,7 +59,7 @@ async function createTables() {
         preferred_bus_type TEXT,
         budget_preference TEXT,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        FOREIGN KEY (user_id) REFERENCES users(id)
+        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
       )
     `);
 
@@ -105,8 +105,8 @@ async function createTables() {
         travel_date DATE NOT NULL,
         is_daily_service INTEGER DEFAULT 0,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        FOREIGN KEY (route_id) REFERENCES routes(id),
-        FOREIGN KEY (bus_id) REFERENCES buses(id)
+        FOREIGN KEY (route_id) REFERENCES routes(id) ON DELETE CASCADE,
+        FOREIGN KEY (bus_id) REFERENCES buses(id) ON DELETE CASCADE
       )
     `);
 
@@ -130,7 +130,7 @@ async function createTables() {
         seat_type TEXT NOT NULL,
         deck TEXT DEFAULT 'lower',
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        FOREIGN KEY (bus_id) REFERENCES buses(id),
+        FOREIGN KEY (bus_id) REFERENCES buses(id) ON DELETE CASCADE,
         UNIQUE(bus_id, seat_number)
       )
     `);
@@ -150,8 +150,8 @@ async function createTables() {
         booking_status TEXT DEFAULT 'confirmed',
         pnr TEXT UNIQUE NOT NULL,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        FOREIGN KEY (user_id) REFERENCES users(id),
-        FOREIGN KEY (schedule_id) REFERENCES schedules(id)
+        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+        FOREIGN KEY (schedule_id) REFERENCES schedules(id) ON DELETE CASCADE
       )
     `);
 
@@ -164,8 +164,8 @@ async function createTables() {
         session_id TEXT,
         locked_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         expires_at TIMESTAMP NOT NULL,
-        FOREIGN KEY (schedule_id) REFERENCES schedules(id),
-        FOREIGN KEY (locked_by_user) REFERENCES users(id)
+        FOREIGN KEY (schedule_id) REFERENCES schedules(id) ON DELETE CASCADE,
+        FOREIGN KEY (locked_by_user) REFERENCES users(id) ON DELETE CASCADE
       )
     `);
 
@@ -193,7 +193,7 @@ async function createTables() {
         result TEXT,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        FOREIGN KEY (user_id) REFERENCES users(id)
+        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
       )
     `);
 
@@ -206,7 +206,7 @@ async function createTables() {
         reasoning TEXT NOT NULL,
         confidence REAL,
         timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        FOREIGN KEY (task_id) REFERENCES agent_tasks(id)
+        FOREIGN KEY (task_id) REFERENCES agent_tasks(id) ON DELETE CASCADE
       )
     `);
 
@@ -221,7 +221,7 @@ async function createTables() {
         metadata TEXT,
         duration_ms INTEGER,
         timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        FOREIGN KEY (task_id) REFERENCES agent_tasks(id)
+        FOREIGN KEY (task_id) REFERENCES agent_tasks(id) ON DELETE CASCADE
       )
     `);
 
@@ -236,7 +236,7 @@ async function createTables() {
         final_status TEXT DEFAULT 'pending',
         final_output TEXT,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        FOREIGN KEY (task_id) REFERENCES agent_tasks(id)
+        FOREIGN KEY (task_id) REFERENCES agent_tasks(id) ON DELETE CASCADE
       )
     `);
 
@@ -272,8 +272,8 @@ async function createTables() {
         rating INTEGER NOT NULL CHECK(rating >= 1 AND rating <= 5),
         comment TEXT,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        FOREIGN KEY (bus_id) REFERENCES buses(id),
-        FOREIGN KEY (user_id) REFERENCES users(id)
+        FOREIGN KEY (bus_id) REFERENCES buses(id) ON DELETE CASCADE,
+        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
       )
     `);
 
@@ -293,8 +293,8 @@ async function createTables() {
         seat_numbers TEXT NOT NULL,
         booking_ids TEXT,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        FOREIGN KEY (user_id) REFERENCES users(id),
-        FOREIGN KEY (schedule_id) REFERENCES schedules(id)
+        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+        FOREIGN KEY (schedule_id) REFERENCES schedules(id) ON DELETE CASCADE
       )
     `);
 
@@ -310,7 +310,7 @@ async function createTables() {
         last_message TEXT,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        FOREIGN KEY (user_id) REFERENCES users(id)
+        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
       )
     `);
 
@@ -421,8 +421,54 @@ async function createTables() {
   }
 }
 
+function fixForeignKeyCascades(done) {
+  const cascades = [
+    `ALTER TABLE agent_tasks DROP CONSTRAINT IF EXISTS agent_tasks_user_id_fkey`,
+    `ALTER TABLE agent_tasks ADD CONSTRAINT agent_tasks_user_id_fkey FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE`,
+
+    `ALTER TABLE agent_decisions DROP CONSTRAINT IF EXISTS agent_decisions_task_id_fkey`,
+    `ALTER TABLE agent_decisions ADD CONSTRAINT agent_decisions_task_id_fkey FOREIGN KEY (task_id) REFERENCES agent_tasks(id) ON DELETE CASCADE`,
+
+    `ALTER TABLE react_traces DROP CONSTRAINT IF EXISTS react_traces_task_id_fkey`,
+    `ALTER TABLE react_traces ADD CONSTRAINT react_traces_task_id_fkey FOREIGN KEY (task_id) REFERENCES agent_tasks(id) ON DELETE CASCADE`,
+
+    `ALTER TABLE agent_execution_summary DROP CONSTRAINT IF EXISTS agent_execution_summary_task_id_fkey`,
+    `ALTER TABLE agent_execution_summary ADD CONSTRAINT agent_execution_summary_task_id_fkey FOREIGN KEY (task_id) REFERENCES agent_tasks(id) ON DELETE CASCADE`,
+
+    `ALTER TABLE bookings DROP CONSTRAINT IF EXISTS bookings_user_id_fkey`,
+    `ALTER TABLE bookings ADD CONSTRAINT bookings_user_id_fkey FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE`,
+
+    `ALTER TABLE user_preferences DROP CONSTRAINT IF EXISTS user_preferences_user_id_fkey`,
+    `ALTER TABLE user_preferences ADD CONSTRAINT user_preferences_user_id_fkey FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE`,
+
+    `ALTER TABLE conversation_sessions DROP CONSTRAINT IF EXISTS conversation_sessions_user_id_fkey`,
+    `ALTER TABLE conversation_sessions ADD CONSTRAINT conversation_sessions_user_id_fkey FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE`,
+
+    `ALTER TABLE seat_reviews DROP CONSTRAINT IF EXISTS seat_reviews_user_id_fkey`,
+    `ALTER TABLE seat_reviews ADD CONSTRAINT seat_reviews_user_id_fkey FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE`,
+
+    `ALTER TABLE group_bookings DROP CONSTRAINT IF EXISTS group_bookings_user_id_fkey`,
+    `ALTER TABLE group_bookings ADD CONSTRAINT group_bookings_user_id_fkey FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE`,
+
+    `ALTER TABLE seat_locks DROP CONSTRAINT IF EXISTS seat_locks_locked_by_user_fkey`,
+    `ALTER TABLE seat_locks ADD CONSTRAINT seat_locks_locked_by_user_fkey FOREIGN KEY (locked_by_user) REFERENCES users(id) ON DELETE CASCADE`
+  ];
+
+  let count = 0;
+  cascades.forEach(sql => {
+    db.run(sql, [], () => {
+      count++;
+      if (count === cascades.length) {
+        console.log('✅ Foreign key ON DELETE CASCADE constraints updated.');
+        if (typeof done === 'function') done();
+      }
+    });
+  });
+}
+
 function runMigrations() {
-  console.log('ðŸ”„ Running database migrations...');
+  console.log('🔄 Running database migrations...');
+  fixForeignKeyCascades();
   
   // Migration: Add booking_group_id to bookings table if it doesn't exist
   db.all(`
@@ -1325,70 +1371,64 @@ function generateSchedulesForDateRange(routesData, startDayOffset, endDayOffset)
   });
 }
 
-// Add a single day's worth of schedules
-function addSchedulesForDate(routesData, dateStr) {
-  db.all('SELECT id, from_city, to_city, distance_km, duration_hours FROM routes ORDER BY id', (routesErr, dbRoutes) => {
-    if (routesErr || !dbRoutes || dbRoutes.length === 0) {
-      console.error('❌ Error fetching routes for addSchedulesForDate:', routesErr);
-      return;
-    }
+// Add a single day's worth of schedules (or for a specific target route)
+function addSchedulesForDate(routesData, dateStr, targetRouteId = null) {
+  return new Promise((resolve) => {
+    const routeFilterSql = targetRouteId ? 'WHERE id = ? ORDER BY id' : 'ORDER BY id';
+    const routeFilterParams = targetRouteId ? [targetRouteId] : [];
 
-    db.all('SELECT id FROM buses ORDER BY id', (busesErr, dbBuses) => {
-      const busIds = (!busesErr && dbBuses && dbBuses.length > 0)
-        ? dbBuses.map(b => b.id)
-        : [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25];
-      const dayOffset = getDayOffsetFromToday(dateStr);
+    db.all(`SELECT id, from_city, to_city, distance_km, duration_hours FROM routes ${routeFilterSql}`, routeFilterParams, (routesErr, dbRoutes) => {
+      if (routesErr || !dbRoutes || dbRoutes.length === 0) {
+        if (routesErr) console.error('❌ Error fetching routes for addSchedulesForDate:', routesErr);
+        return resolve(0);
+      }
 
-      db.all('SELECT bus_id, route_id FROM stopped_route_services', (stoppedErr, stoppedRows) => {
-        const stoppedSet = new Set((stoppedRows || []).map(r => `${r.bus_id}_${r.route_id}`));
-        let scheduleCount = 0;
-        const scheduleStmt = db.prepare('INSERT INTO schedules (route_id, bus_id, departure_time, arrival_time, base_price, available_seats, travel_date) VALUES (?, ?, ?, ?, ?, ?, ?)');
+      db.all('SELECT id FROM buses ORDER BY id', (busesErr, dbBuses) => {
+        const busIds = (!busesErr && dbBuses && dbBuses.length > 0)
+          ? dbBuses.map(b => b.id)
+          : [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25];
+        const dayOffset = getDayOffsetFromToday(dateStr);
 
-        for (let routeIdx = 0; routeIdx < dbRoutes.length; routeIdx++) {
-          const route = dbRoutes[routeIdx];
-          const routeId = route.id;
-          const distKm = route.distance_km;
-          const durationHrs = route.duration_hours;
+        db.all('SELECT bus_id, route_id FROM stopped_route_services', (stoppedErr, stoppedRows) => {
+          const stoppedSet = new Set((stoppedRows || []).map(r => `${r.bus_id}_${r.route_id}`));
 
-          for (let i = 0; i < 4; i++) {
-            const busId = busIds[(routeIdx * 4 + i) % busIds.length];
-            if (stoppedSet.has(`${busId}_${routeId}`)) {
-              continue;
-            }
-            const depTime = getStaggeredDepartureTime(routeId, i);
-            const arrTime = calcArrival(depTime, durationHrs);
-            const basePrice = calculateDynamicPrice(distKm, busId, i, routeId, dayOffset);
-            scheduleStmt.run(routeId, busId, depTime, arrTime, basePrice, 40, dateStr);
-            scheduleCount++;
-          }
-        }
+          // Get existing schedule keys for this date to avoid duplicate inserts
+          db.all('SELECT route_id, bus_id, departure_time FROM schedules WHERE travel_date = ?', [dateStr], (existErr, existSchedules) => {
+            const existingSet = new Set((existSchedules || []).map(s => `${s.route_id}_${s.bus_id}_${s.departure_time}`));
+            let scheduleCount = 0;
+            const scheduleStmt = db.prepare('INSERT INTO schedules (route_id, bus_id, departure_time, arrival_time, base_price, available_seats, travel_date) VALUES (?, ?, ?, ?, ?, ?, ?)');
 
-        // Also auto-replicate schedules for daily service route assignments
-        db.all(`
-          SELECT DISTINCT s.route_id, s.bus_id, s.departure_time, s.arrival_time, s.base_price, b.total_seats
-          FROM schedules s
-          JOIN buses b ON b.id = s.bus_id
-          JOIN routes r ON r.id = s.route_id
-          WHERE s.is_daily_service = 1 OR COALESCE(b.is_daily_service, 1) = 1
-        `, (err, dailyTemplates) => {
-          if (!err && dailyTemplates && dailyTemplates.length > 0) {
-            dailyTemplates.forEach((t) => {
-              if (!stoppedSet.has(`${t.bus_id}_${t.route_id}`)) {
-                db.get('SELECT id FROM schedules WHERE route_id = ? AND bus_id = ? AND travel_date = ? AND departure_time = ?', [t.route_id, t.bus_id, dateStr, t.departure_time], (chkErr, existing) => {
-                  if (!chkErr && !existing) {
-                    db.run(
-                      'INSERT INTO schedules (route_id, bus_id, departure_time, arrival_time, base_price, available_seats, travel_date, is_daily_service) VALUES (?, ?, ?, ?, ?, ?, ?, 1)',
-                      [t.route_id, t.bus_id, t.departure_time, t.arrival_time, t.base_price, t.total_seats || 40, dateStr]
-                    );
-                  }
-                });
+            for (let routeIdx = 0; routeIdx < dbRoutes.length; routeIdx++) {
+              const route = dbRoutes[routeIdx];
+              const routeId = route.id;
+              const distKm = route.distance_km;
+              const durationHrs = route.duration_hours;
+
+              for (let i = 0; i < 4; i++) {
+                const busId = busIds[(routeIdx * 4 + i) % busIds.length];
+                if (stoppedSet.has(`${busId}_${routeId}`)) {
+                  continue;
+                }
+                const depTime = getStaggeredDepartureTime(routeId, i);
+                const key = `${routeId}_${busId}_${depTime}`;
+                if (existingSet.has(key)) {
+                  continue;
+                }
+                const arrTime = calcArrival(depTime, durationHrs);
+                const basePrice = calculateDynamicPrice(distKm, busId, i, routeId, dayOffset);
+                scheduleStmt.run(routeId, busId, depTime, arrTime, basePrice, 40, dateStr);
+                scheduleCount++;
               }
-            });
-          }
-        });
+            }
 
-        scheduleStmt.finalize();
-        console.log(`✅ Added ${scheduleCount} schedules for ${dateStr}`);
+            scheduleStmt.finalize(() => {
+              if (scheduleCount > 0) {
+                console.log(`✅ Added ${scheduleCount} schedule(s) for ${dateStr}${targetRouteId ? ` (Route #${targetRouteId})` : ''}`);
+              }
+              resolve(scheduleCount);
+            });
+          });
+        });
       });
     });
   });
@@ -1579,9 +1619,9 @@ function performDailyCleanupWithData(routesData, todayStr, day30Str) {
           }
         });
         
-        // Ensure ALL 30 days exist (fill any gaps)
+        // Ensure ALL 30 days exist for ALL active routes (fill any gaps per route)
         console.log('');
-        console.log('ðŸ”  Checking for missing dates in 30-day window...');
+        console.log('🔍 Checking for missing route schedules in 30-day window...');
         
         const today = new Date();
         const { getOffsetLocalDateString } = require('../utils/dateUtils');
@@ -1592,64 +1632,71 @@ function performDailyCleanupWithData(routesData, todayStr, day30Str) {
           requiredDates.push(getOffsetLocalDateString(dayOffset));
         }
         
-        // Check which dates are missing
-        let missingDatesCount = 0;
-        let checkCompleted = 0;
-        const totalChecks = requiredDates.length;
-        
-        requiredDates.forEach(dateStr => {
-          db.get('SELECT COUNT(*) as count FROM schedules WHERE travel_date = ?', [dateStr], (err, result) => {
-            checkCompleted++;
-            
-            if (err) {
-              console.error(`❌ Error checking ${dateStr}:`, err);
-            } else if (!result || Number(result.count) === 0) {
-              missingDatesCount++;
-              console.log(`   ➕ Missing: ${dateStr} - adding schedules...`);
-              addSchedulesForDate(routesData, dateStr);
-            }
-            
-            // When all checks are done, run final verification
-            if (checkCompleted === totalChecks) {
-              if (missingDatesCount === 0) {
-                console.log('✅ All 30 days already exist - no gaps found!');
-              } else {
-                console.log(`✅ Filled ${missingDatesCount} missing date(s)`);
+        db.all('SELECT id FROM routes ORDER BY id', (allRoutesErr, allDbRoutes) => {
+          if (allRoutesErr || !allDbRoutes || allDbRoutes.length === 0) {
+            return;
+          }
+          const allRouteIds = allDbRoutes.map(r => r.id);
+          let checkCompleted = 0;
+          const totalChecks = requiredDates.length;
+          let totalAddedSchedules = 0;
+
+          requiredDates.forEach(dateStr => {
+            // Find which routes already have schedules on this date
+            db.all('SELECT DISTINCT route_id FROM schedules WHERE travel_date = ?', [dateStr], async (err, resultRows) => {
+              checkCompleted++;
+              const routesWithSchedules = new Set((resultRows || []).map(r => Number(r.route_id)));
+              const missingRouteIds = allRouteIds.filter(id => !routesWithSchedules.has(id));
+
+              if (missingRouteIds.length > 0) {
+                for (const mRouteId of missingRouteIds) {
+                  const added = await addSchedulesForDate(routesData, dateStr, mRouteId);
+                  totalAddedSchedules += added;
+                }
               }
-              
-              // Final verification
-              setTimeout(() => {
-                db.get(`
-                  SELECT 
-                    MIN(travel_date) as first_date,
-                    MAX(travel_date) as last_date,
-                    COUNT(DISTINCT travel_date) as total_days,
-                    COUNT(*) as total_schedules
-                  FROM schedules
-                `, (err, final) => {
-                  if (!err && final) {
-                    console.log('');
-                    console.log('📊 AFTER CLEANUP:');
-                    console.log(`   First date: ${final.first_date} (should be ${todayStr})`);
-                    console.log(`   Last date: ${final.last_date} (should be ${day30Str})`);
-console.log(`   Total days: ${final.total_days}`);
-                    console.log(`   Total schedules: ${final.total_schedules}`);
-                    console.log('');
-                    
-                    // Verify we have exactly 30 days
-                    if (Number(final.total_days) === 30 && final.first_date === todayStr && final.last_date === day30Str) {
-                      console.log('✅ SUCCESS: Exactly 30 days maintained! (' + todayStr + ' to ' + day30Str + ')');
-                    } else if (Number(final.total_days) === 30) {
-                      console.log('✅ SUCCESS: Exactly 30 days maintained!');
-                    } else {
-                      console.log(`⚠️  WARNING: Expected 30 days, but found ${final.total_days} days`);
+
+              // When all checks are done, run final verification
+              if (checkCompleted === totalChecks) {
+                if (totalAddedSchedules === 0) {
+                  console.log('✅ All 30 days fully populated for all routes - no schedule gaps found!');
+                } else {
+                  console.log(`✅ Filled a total of ${totalAddedSchedules} missing route schedule(s) across 30 days.`);
+                }
+                
+                // Final verification
+                setTimeout(() => {
+                  db.get(`
+                    SELECT 
+                      MIN(travel_date) as first_date,
+                      MAX(travel_date) as last_date,
+                      COUNT(DISTINCT travel_date) as total_days,
+                      COUNT(*) as total_schedules
+                    FROM schedules
+                  `, (err, final) => {
+                    if (!err && final) {
+                      console.log('');
+                      console.log('📊 AFTER CLEANUP:');
+                      console.log(`   First date: ${final.first_date} (should be ${todayStr})`);
+                      console.log(`   Last date: ${final.last_date} (should be ${day30Str})`);
+                      console.log(`   Total days: ${final.total_days}`);
+                      console.log(`   Total schedules: ${final.total_schedules}`);
+                      console.log('');
+                      
+                      // Verify we have exactly 30 days
+                      if (Number(final.total_days) === 30 && final.first_date === todayStr && final.last_date === day30Str) {
+                        console.log('✅ SUCCESS: Exactly 30 days maintained! (' + todayStr + ' to ' + day30Str + ')');
+                      } else if (Number(final.total_days) === 30) {
+                        console.log('✅ SUCCESS: Exactly 30 days maintained!');
+                      } else {
+                        console.log(`⚠️  WARNING: Expected 30 days, but found ${final.total_days} days`);
+                      }
+                      console.log('================================================================================');
+                      console.log('');
                     }
-                    console.log('================================================================================');
-                    console.log('');
-                  }
-                });
-              }, 1000);
-            }
+                  });
+                }, 1000);
+              }
+            });
           });
         });
       });

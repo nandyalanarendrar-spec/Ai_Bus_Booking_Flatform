@@ -4,27 +4,31 @@ const nodemailer = require('nodemailer');
 const EMAIL_USER = process.env.EMAIL_USER || 'nnrreddy.123456789@gmail.com';
 const EMAIL_APP_PASSWORD = process.env.EMAIL_APP_PASSWORD || 'kuvxnjnublmcnpik';
 
-// Create transporter with explicit SMTP configuration for cloud host compatibility
+// Create transporter using Gmail service / SSL port 465 for maximum cloud host compatibility (Render, Heroku, AWS, etc.)
 const transporter = nodemailer.createTransport({
+  service: 'gmail',
   host: 'smtp.gmail.com',
-  port: 587,
-  secure: false, // true for 465, false for other ports
+  port: 465,
+  secure: true, // true for port 465 SSL
   auth: {
     user: EMAIL_USER,
     pass: EMAIL_APP_PASSWORD
   },
-  connectionTimeout: 10000,
-  greetingTimeout: 10000,
-  socketTimeout: 15000
+  tls: {
+    rejectUnauthorized: false
+  },
+  connectionTimeout: 15000,
+  greetingTimeout: 15000,
+  socketTimeout: 20000
 });
 
-// Verify transporter configuration
+// Verify transporter configuration asynchronously without blocking startup
 transporter.verify((error, success) => {
   if (error) {
-    console.log('⚠️  Email service not configured. Set EMAIL_USER and EMAIL_APP_PASSWORD environment variables.');
-    console.log('   For Gmail: Use App Password from Google Account Settings > Security > 2-Step Verification > App passwords');
+    console.log('⚠️  Email service notice:', error.message);
+    console.log('   Ensure EMAIL_USER and EMAIL_APP_PASSWORD environment variables are set in Render Dashboard.');
   } else {
-    console.log('✅ Email service ready');
+    console.log('✅ Email service ready and verified via Gmail SSL');
   }
 });
 

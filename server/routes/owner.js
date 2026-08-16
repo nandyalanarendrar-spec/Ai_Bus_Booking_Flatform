@@ -776,6 +776,9 @@ router.delete('/users/:id', authenticateToken, requireOwner, async (req, res) =>
     }
     
     // Delete user dependencies
+    if (user.email) {
+      await runAsync('DELETE FROM user_otps WHERE email = ?', [user.email]);
+    }
     await runAsync('DELETE FROM user_preferences WHERE user_id = ?', [id]);
     await runAsync('DELETE FROM seat_locks WHERE locked_by_user = ?', [id]);
     await runAsync('DELETE FROM seat_reviews WHERE user_id = ?', [id]);
