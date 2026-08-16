@@ -1,4 +1,10 @@
 const nodemailer = require('nodemailer');
+const dns = require('dns');
+
+// Force Node.js DNS to prioritize IPv4 (prevents Render ENETUNREACH IPv6 errors)
+if (dns.setDefaultResultOrder) {
+  dns.setDefaultResultOrder('ipv4first');
+}
 
 // Dynamically build Nodemailer transporter using fresh process.env credentials
 function getTransporter() {
@@ -6,10 +12,10 @@ function getTransporter() {
   const pass = (process.env.EMAIL_APP_PASSWORD || 'htzrfjjiladqgmun').replace(/[\s\-]+/g, '').trim();
 
   return nodemailer.createTransport({
-    service: 'gmail',
     host: 'smtp.gmail.com',
     port: 465,
     secure: true,
+    family: 4, // Force IPv4 socket connection on Render
     auth: {
       user: user,
       pass: pass
