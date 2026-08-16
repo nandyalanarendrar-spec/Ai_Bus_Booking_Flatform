@@ -27,6 +27,8 @@ function getTransporter() {
     greetingTimeout: 20000,
     socketTimeout: 25000
   });
+}
+
 const https = require('https');
 
 /**
