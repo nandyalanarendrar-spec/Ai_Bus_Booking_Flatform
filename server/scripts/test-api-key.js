@@ -1,8 +1,9 @@
-require('dotenv').config();
+const path = require('path');
+require('dotenv').config({ path: path.join(__dirname, '../.env') });
 const https = require('https');
 
 const apiKey = process.env.GEMINI_API_KEY;
-const model = process.env.GEMINI_MODEL || 'gemini-1.5-flash';
+const model = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
 
 if (!apiKey) {
   console.log('❌ No GEMINI_API_KEY found in .env');
@@ -15,8 +16,8 @@ console.log(`   Model: ${model}`);
 console.log('');
 
 const postData = JSON.stringify({
-  contents: [{ role: 'user', parts: [{ text: 'Say "API KEY WORKS!" in exactly 3 words.' }] }],
-  generationConfig: { temperature: 0, maxOutputTokens: 20 }
+  contents: [{ role: 'user', parts: [{ text: 'Say "API KEY WORKS!"' }] }],
+  generationConfig: { temperature: 0.1, maxOutputTokens: 100 }
 });
 
 const req = https.request({

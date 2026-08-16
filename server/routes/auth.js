@@ -57,18 +57,26 @@ router.post('/register', async (req, res) => {
                 return res.status(500).json({ error: 'Failed to send verification email' });
               }
               
-              // Send OTP email
+              // Send OTP email with 8s timeout to prevent hanging on SMTP network blocks
               try {
-                await sendOTPEmail(email, otp);
-                res.status(201).json({ 
+                const sendPromise = sendOTPEmail(email, otp);
+                const timeoutPromise = new Promise((_, reject) => 
+                  setTimeout(() => reject(new Error('Email dispatch timed out')), 8000)
+                );
+                
+                await Promise.race([sendPromise, timeoutPromise]);
+                return res.status(201).json({ 
                   message: 'Registration successful. Please check your email for verification code.',
                   email: email,
                   requiresVerification: true
                 });
               } catch (emailErr) {
-                console.error('Error sending email:', emailErr);
-                res.status(500).json({ 
-                  error: 'Registration successful but failed to send verification email. Please contact support.' 
+                console.error('Error or timeout sending email:', emailErr.message);
+                // Return verification screen so user can enter OTP or click Resend
+                return res.status(201).json({ 
+                  message: 'Registration created! Verification code generated. Please check email or click Resend OTP.',
+                  email: email,
+                  requiresVerification: true
                 });
               }
             }
