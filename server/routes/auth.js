@@ -431,16 +431,20 @@ router.get('/me', authenticateToken, (req, res) => {
 
 // Diagnostic endpoint to test email dispatch live
 router.get('/test-email', async (req, res) => {
+  const { testSendOTPEmail } = require('../services/emailService');
   const targetEmail = req.query.email || process.env.EMAIL_USER || 'nnrreddy.123456789@gmail.com';
   console.log(`🧪 Diagnostics: Testing email dispatch to ${targetEmail}...`);
-  const success = await sendOTPEmail(targetEmail, '123456');
+  const result = await testSendOTPEmail(targetEmail, '123456');
   res.json({
     timestamp: new Date().toISOString(),
     targetEmail,
     envEmailUser: process.env.EMAIL_USER || 'nnrreddy.123456789@gmail.com',
     hasAppPasswordEnv: !!process.env.EMAIL_APP_PASSWORD,
-    dispatchSuccess: success,
-    status: success ? 'EMAIL_DISPATCHED_OK' : 'DISPATCH_FAILED_CHECK_RENDER_LOGS'
+    dispatchSuccess: result.success,
+    errorDetails: result.error || null,
+    smtpCode: result.code || null,
+    smtpResponse: result.response || null,
+    status: result.success ? 'EMAIL_DISPATCHED_OK' : 'DISPATCH_FAILED'
   });
 });
 

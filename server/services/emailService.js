@@ -114,6 +114,33 @@ async function sendOTPEmail(email, otp) {
 }
 
 /**
+ * Diagnostic test email helper with full error output
+ */
+async function testSendOTPEmail(email, otp = '123456') {
+  const user = (process.env.EMAIL_USER || 'nnrreddy.123456789@gmail.com').trim();
+  const transporter = getTransporter();
+
+  const mailOptions = {
+    from: `"Public Bus Booking" <${user}>`,
+    to: email,
+    subject: 'Test Verification Email - Public Bus Booking',
+    html: `<h2>Verification Code Test: <strong>${otp}</strong></h2>`
+  };
+
+  try {
+    const info = await transporter.sendMail(mailOptions);
+    return { success: true, messageId: info.messageId, response: info.response };
+  } catch (error) {
+    return {
+      success: false,
+      error: error.message || String(error),
+      code: error.code || null,
+      response: error.response || null
+    };
+  }
+}
+
+/**
  * Send booking confirmation email
  * @param {string} email - User email address
  * @param {object} bookingDetails - Booking information
@@ -627,6 +654,7 @@ async function sendServiceCancellationEmail(details) {
 
 module.exports = {
   sendOTPEmail,
+  testSendOTPEmail,
   sendBookingConfirmationEmail,
   sendCancellationEmail,
   sendPasswordResetEmail,
