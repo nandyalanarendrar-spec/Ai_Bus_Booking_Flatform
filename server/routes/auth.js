@@ -144,8 +144,18 @@ router.post('/login', async (req, res) => {
           
           if (!user.verified) {
             clearTimeout(loginTimeout);
+            // Generate and send a fresh OTP so user receives it in their Gmail inbox immediately
+            const otp = generateOTP();
+            const expiresAt = new Date(Date.now() + 5 * 60 * 1000).toISOString();
+            
+            db.run('DELETE FROM user_otps WHERE email = ?', [user.email], () => {
+              db.run('INSERT INTO user_otps (email, otp, expires_at) VALUES (?, ?, ?)', [user.email, otp, expiresAt], () => {
+                sendOTPEmail(user.email, otp).catch(e => console.error('Login OTP email dispatch error:', e.message));
+              });
+            });
+
             return res.status(403).json({ 
-              error: 'Email not verified. Please verify your email before logging in.',
+              error: 'Email not verified. A fresh verification code has been sent to your Gmail inbox.',
               requiresVerification: true,
               email: user.email
             });
