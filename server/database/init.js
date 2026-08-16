@@ -1681,10 +1681,6 @@ function performDailyCleanupWithData(routesData, todayStr, day35Str) {
             return;
           }
           const allRouteIds = allDbRoutes.map(r => r.id);
-          let checkCompleted = 0;
-          const totalChecks = requiredDates.length;
-          let totalAddedSchedules = 0;
-
           let totalAddedSchedules = 0;
           
           (async () => {
