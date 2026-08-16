@@ -1,34 +1,28 @@
 const nodemailer = require('nodemailer');
 
-// Email configuration - Use environment variables in production
-const EMAIL_USER = process.env.EMAIL_USER || 'nnrreddy.123456789@gmail.com';
-const EMAIL_APP_PASSWORD = process.env.EMAIL_APP_PASSWORD || 'kuvxnjnublmcnpik';
+// Email configuration - Use environment variables in production (sanitize whitespace/spaces)
+const EMAIL_USER = (process.env.EMAIL_USER || 'nnrreddy.123456789@gmail.com').trim();
+const EMAIL_APP_PASSWORD = (process.env.EMAIL_APP_PASSWORD || 'kuvxnjnublmcnpik').replace(/\s+/g, '').trim();
 
-// Create transporter using Gmail service / SSL port 465 for maximum cloud host compatibility (Render, Heroku, AWS, etc.)
+// Create transporter using Gmail service for maximum cloud host compatibility (Render, Heroku, AWS, etc.)
 const transporter = nodemailer.createTransport({
   service: 'gmail',
-  host: 'smtp.gmail.com',
-  port: 465,
-  secure: true, // true for port 465 SSL
   auth: {
     user: EMAIL_USER,
     pass: EMAIL_APP_PASSWORD
   },
   tls: {
     rejectUnauthorized: false
-  },
-  connectionTimeout: 15000,
-  greetingTimeout: 15000,
-  socketTimeout: 20000
+  }
 });
 
 // Verify transporter configuration asynchronously without blocking startup
 transporter.verify((error, success) => {
   if (error) {
-    console.log('⚠️  Email service notice:', error.message);
-    console.log('   Ensure EMAIL_USER and EMAIL_APP_PASSWORD environment variables are set in Render Dashboard.');
+    console.error('⚠️  Email SMTP verification error:', error.message);
+    console.error('   Ensure EMAIL_USER and EMAIL_APP_PASSWORD (16-char App Password without spaces) are set correctly in Render Settings.');
   } else {
-    console.log('✅ Email service ready and verified via Gmail SSL');
+    console.log(`✅ Email service ready & authenticated for ${EMAIL_USER}`);
   }
 });
 
