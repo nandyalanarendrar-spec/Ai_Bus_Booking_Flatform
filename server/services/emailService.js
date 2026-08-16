@@ -35,47 +35,50 @@ const https = require('https');
  * Send transactional email over HTTPS REST API (bypasses Render outbound TCP port blocks)
  */
 async function sendEmailViaHttpsApi(toEmail, subject, htmlContent) {
-  // Option 1: Resend HTTP API (https://resend.com)
-  if (process.env.RESEND_API_KEY) {
+  // Option 1: Google Apps Script Webhook (Sends directly from your Gmail account nnrreddy.123456789@gmail.com to ANY email address worldwide)
+  if (process.env.GMAIL_WEBHOOK_URL) {
     const postData = JSON.stringify({
-      from: 'Public Bus Booking <onboarding@resend.dev>',
-      to: [toEmail],
+      to: toEmail,
       subject: subject,
       html: htmlContent
     });
 
-    return new Promise((resolve, reject) => {
-      const req = https.request({
-        hostname: 'api.resend.com',
-        path: '/emails',
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${process.env.RESEND_API_KEY.trim()}`,
-          'Content-Type': 'application/json',
-          'Content-Length': Buffer.byteLength(postData)
-        },
-        timeout: 10000
-      }, (res) => {
-        let data = '';
-        res.on('data', chunk => data += chunk);
-        res.on('end', () => {
-          if (res.statusCode >= 200 && res.statusCode < 300) {
-            console.log(`📧 Email sent via Resend HTTPS API to ${toEmail}`);
-            resolve({ success: true, provider: 'Resend HTTPS', data });
-          } else {
-            console.error(`❌ Resend HTTP error ${res.statusCode}:`, data);
-            reject(new Error(`Resend API HTTP ${res.statusCode}: ${data}`));
-          }
+    try {
+      const webhookRes = await new Promise((resolve, reject) => {
+        const urlObj = new URL(process.env.GMAIL_WEBHOOK_URL.trim());
+        const req = https.request({
+          hostname: urlObj.hostname,
+          path: urlObj.pathname + urlObj.search,
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Content-Length': Buffer.byteLength(postData)
+          },
+          timeout: 12000
+        }, (res) => {
+          let data = '';
+          res.on('data', chunk => data += chunk);
+          res.on('end', () => {
+            if (res.statusCode >= 200 && res.statusCode < 400) {
+              console.log(`📧 Email sent via Google Apps Script Webhook to ${toEmail}`);
+              resolve({ success: true, provider: 'Gmail Webhook', data });
+            } else {
+              console.error(`❌ Google Webhook HTTP error ${res.statusCode}:`, data);
+              reject(new Error(`Google Webhook HTTP ${res.statusCode}: ${data}`));
+            }
+          });
         });
+        req.on('error', err => reject(err));
+        req.on('timeout', () => { req.destroy(); reject(new Error('Google Webhook timeout')); });
+        req.write(postData);
+        req.end();
       });
-      req.on('error', err => reject(err));
-      req.on('timeout', () => { req.destroy(); reject(new Error('Resend HTTPS request timeout')); });
-      req.write(postData);
-      req.end();
-    });
+      return webhookRes;
+    } catch (gErr) {
+      console.warn('⚠️ Google Webhook error:', gErr.message);
+    }
   }
-
-  // Option 2: Brevo HTTP API (https://brevo.com)
+  // Option 1: Brevo HTTP API (https://brevo.com) - Allows sending to ANY recipient email address
   if (process.env.BREVO_API_KEY) {
     const senderEmail = (process.env.EMAIL_USER || 'nnrreddy.123456789@gmail.com').trim();
     const postData = JSON.stringify({
@@ -85,35 +88,85 @@ async function sendEmailViaHttpsApi(toEmail, subject, htmlContent) {
       htmlContent: htmlContent
     });
 
-    return new Promise((resolve, reject) => {
-      const req = https.request({
-        hostname: 'api.brevo.com',
-        path: '/v3/smtp/email',
-        method: 'POST',
-        headers: {
-          'api-key': process.env.BREVO_API_KEY.trim(),
-          'Content-Type': 'application/json',
-          'Content-Length': Buffer.byteLength(postData)
-        },
-        timeout: 10000
-      }, (res) => {
-        let data = '';
-        res.on('data', chunk => data += chunk);
-        res.on('end', () => {
-          if (res.statusCode >= 200 && res.statusCode < 300) {
-            console.log(`📧 Email sent via Brevo HTTPS API to ${toEmail}`);
-            resolve({ success: true, provider: 'Brevo HTTPS', data });
-          } else {
-            console.error(`❌ Brevo HTTP error ${res.statusCode}:`, data);
-            reject(new Error(`Brevo API HTTP ${res.statusCode}: ${data}`));
-          }
+    try {
+      const brevoRes = await new Promise((resolve, reject) => {
+        const req = https.request({
+          hostname: 'api.brevo.com',
+          path: '/v3/smtp/email',
+          method: 'POST',
+          headers: {
+            'api-key': process.env.BREVO_API_KEY.trim(),
+            'Content-Type': 'application/json',
+            'Content-Length': Buffer.byteLength(postData)
+          },
+          timeout: 10000
+        }, (res) => {
+          let data = '';
+          res.on('data', chunk => data += chunk);
+          res.on('end', () => {
+            if (res.statusCode >= 200 && res.statusCode < 300) {
+              console.log(`📧 Email sent via Brevo HTTPS API to ${toEmail}`);
+              resolve({ success: true, provider: 'Brevo HTTPS', data });
+            } else {
+              console.error(`❌ Brevo HTTP error ${res.statusCode}:`, data);
+              reject(new Error(`Brevo API HTTP ${res.statusCode}: ${data}`));
+            }
+          });
         });
+        req.on('error', err => reject(err));
+        req.on('timeout', () => { req.destroy(); reject(new Error('Brevo HTTPS request timeout')); });
+        req.write(postData);
+        req.end();
       });
-      req.on('error', err => reject(err));
-      req.on('timeout', () => { req.destroy(); reject(new Error('Brevo HTTPS request timeout')); });
-      req.write(postData);
-      req.end();
+      return brevoRes;
+    } catch (brevoErr) {
+      console.warn('⚠️ Brevo HTTPS API error:', brevoErr.message);
+    }
+  }
+
+  // Option 2: Resend HTTP API (https://resend.com)
+  if (process.env.RESEND_API_KEY) {
+    const postData = JSON.stringify({
+      from: 'Public Bus Booking <onboarding@resend.dev>',
+      to: [toEmail],
+      subject: subject,
+      html: htmlContent
     });
+
+    try {
+      const resendRes = await new Promise((resolve, reject) => {
+        const req = https.request({
+          hostname: 'api.resend.com',
+          path: '/emails',
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${process.env.RESEND_API_KEY.trim()}`,
+            'Content-Type': 'application/json',
+            'Content-Length': Buffer.byteLength(postData)
+          },
+          timeout: 10000
+        }, (res) => {
+          let data = '';
+          res.on('data', chunk => data += chunk);
+          res.on('end', () => {
+            if (res.statusCode >= 200 && res.statusCode < 300) {
+              console.log(`📧 Email sent via Resend HTTPS API to ${toEmail}`);
+              resolve({ success: true, provider: 'Resend HTTPS', data });
+            } else {
+              console.error(`❌ Resend HTTP error ${res.statusCode}:`, data);
+              reject(new Error(`Resend API HTTP ${res.statusCode}: ${data}`));
+            }
+          });
+        });
+        req.on('error', err => reject(err));
+        req.on('timeout', () => { req.destroy(); reject(new Error('Resend HTTPS request timeout')); });
+        req.write(postData);
+        req.end();
+      });
+      return resendRes;
+    } catch (resendErr) {
+      console.warn('⚠️ Resend HTTPS API error:', resendErr.message);
+    }
   }
 
   return null;
