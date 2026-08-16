@@ -421,6 +421,11 @@ async function composeLLMResponse({ taskType, userMessage, baseResponse, structu
     return baseResponse;
   }
 
+  // Preserve full template details (Route, Bus, Seats, Passenger, Date, Prices, PNR)
+  if (taskType === 'book_ticket' || taskType === 'cancel_booking' || structuredData?.status === 'pending_payment' || structuredData?.status === 'pending_cancellation') {
+    return baseResponse;
+  }
+
   const summary = summarizeStructuredData(structuredData);
   const systemPrompt = `You are a sophisticated AI agent for BusGo (like ChatGPT or GitHub Copilot). You have full access to the app's database and capabilities. Think step-by-step to understand the user's intent. Provide clear, intelligent, and helpful responses.
 Your capabilities include:
