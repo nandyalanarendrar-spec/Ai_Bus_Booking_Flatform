@@ -1,0 +1,31 @@
+{
+  "name": "bus-booking-ai-app",
+  "version": "1.0.0",
+  "description": "Full-stack AI-powered bus reservation system",
+  "scripts": {
+    "predev": "node server/scripts/ollama-bootstrap.js",
+    "dev": "concurrently \"npm run server\" \"npm run client\" \"npm run owner\" \"npm run bus-owner\"",
+    "start": "concurrently \"npm run server\" \"npm run client\"",
+    "start:all": "concurrently \"npm run server\" \"npm run client\" \"npm run owner\" \"npm run bus-owner\"",
+    "server": "cd server && npm install && npm run dev",
+    "client": "cd client && npm install && npm run dev",
+    "owner": "cd owner && npm install && npm run dev",
+    "bus-owner": "cd bus-owner && npm install && npm run dev",
+    "migrate:local-to-cloud": "cd server && npm run migrate:local-to-cloud",
+    "split-project": "cd server && npm run split-project",
+    "install-all": "cd server && npm install && cd ../client && npm install && cd ../owner && npm install && cd ../bus-owner && npm install"
+  },
+  "keywords": [
+    "bus-booking",
+    "ai",
+    "multi-agent",
+    "react",
+    "express",
+    "sqlite"
+  ],
+  "author": "",
+  "license": "MIT",
+  "devDependencies": {
+    "concurrently": "^8.2.2"
+  }
+}
