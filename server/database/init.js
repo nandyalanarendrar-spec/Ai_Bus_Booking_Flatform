@@ -5,14 +5,18 @@ let cleanupInterval = null;
 
 function initializeDatabase() {
   db = createDatabase();
-  db.ready
-    .then(() => {
-      console.log('ðŸ“¦ Creating database schema...');
-      createTables();
-    })
-    .catch((err) => {
-      console.error('Database connection error:', err);
-    });
+  if (!global.isTesting) {
+    db.ready
+      .then(() => {
+        console.log('📦 Creating database schema...');
+        createTables();
+      })
+      .catch((err) => {
+        console.error('Database connection error:', err);
+      });
+  } else {
+    console.log('🧪 Testing mode: Skipping background table creation and migrations.');
+  }
   
   return db;
 }
@@ -468,13 +472,10 @@ function fixForeignKeyCascades(done) {
 
 function runMigrations() {
   console.log('🔄 Running database migrations...');
-  fixForeignKeyCascades();
-
-  // Deduplicate routes and schedules, and add unique constraints/indices
-  db.serialize(() => {
-    console.log('🧹 Purging duplicate routes and schedules from Neon PostgreSQL...');
-    
-    // 1. Delete duplicate route rows (keeping the lowest ID)
+  
+  fixForeignKeyCascades(() => {
+    // Next: deduplicate routes
+    console.log('🧹 Purging duplicate routes from Neon PostgreSQL...');
     db.run(`
       DELETE FROM routes 
       WHERE id NOT IN (
@@ -486,39 +487,25 @@ function runMigrations() {
       if (err) console.error('Error deduplicating routes:', err);
       else console.log('✅ Route rows deduplicated.');
       
-      // 2. Add unique index on routes (LOWER(from_city), LOWER(to_city))
+      // Next: Create route unique index
       db.run(`
         CREATE UNIQUE INDEX IF NOT EXISTS idx_unique_routes_cities 
         ON routes (LOWER(from_city), LOWER(to_city))
       `, (err) => {
         if (err) console.error('Error creating route unique index:', err);
         else console.log('✅ Route unique index verified.');
-      });
-    });
-
-    // 3. Delete duplicate schedule rows
-    db.run(`
-      DELETE FROM schedules 
-      WHERE id NOT IN (
-        SELECT MIN(id) 
-        FROM schedules 
-        GROUP BY route_id, bus_id, travel_date, departure_time
-      )
-    `, (err) => {
-      if (err) console.error('Error deduplicating schedules:', err);
-      else console.log('✅ Schedule rows deduplicated.');
-
-      // 4. Add unique index on schedules (route_id, bus_id, travel_date, departure_time)
-      db.run(`
-        CREATE UNIQUE INDEX IF NOT EXISTS idx_unique_schedules_times 
-        ON schedules (route_id, bus_id, travel_date, departure_time)
-      `, (err) => {
-        if (err) console.error('Error creating schedule unique index:', err);
-        else console.log('✅ Schedule unique index verified.');
+        
+        // Next: migrate duplicate schedules
+        migrateDuplicateSchedules(() => {
+          // Next: bookings migration
+          runBookingsMigration();
+        });
       });
     });
   });
+}
 
+function runBookingsMigration() {
   // Migration: Add booking_group_id to bookings table if it doesn't exist
   db.all(`
     SELECT column_name AS name
@@ -527,7 +514,7 @@ function runMigrations() {
       AND table_name = 'bookings'
   `, (err, columns) => {
     if (err) {
-      console.error('Migration error:', err);
+      console.error('Migration error on bookings:', err);
       runBusesMigration();
       return;
     }
@@ -1053,9 +1040,13 @@ function seedData() {
                     if (!err && routes) {
                       const routesData = routes.map(r => [r.from_city, r.to_city, r.distance_km, r.duration_hours]);
                       
-                      startScheduleCleanupService(routesData);
-                      console.log('🔄 Running cleanup check on server restart...');
-                      setTimeout(() => performDailyCleanup(routesData), 100);
+                      if (!global.isTesting) {
+                        startScheduleCleanupService(routesData);
+                        console.log('🔄 Running cleanup check on server restart...');
+                        setTimeout(() => performDailyCleanup(routesData), 100);
+                      } else {
+                        console.log('🧪 Testing mode detected. Automatic background cleanup bypassed.');
+                      }
                     }
                   });
                 });
@@ -1346,14 +1337,19 @@ function generateSchedulesForDateRange(routesData, startDayOffset, endDayOffset)
         return reject(routesErr || new Error('No routes found in database for schedule generation'));
       }
 
-      db.all('SELECT id FROM buses ORDER BY id', (busesErr, dbBuses) => {
+      db.all('SELECT id FROM buses WHERE is_daily_service = 1 ORDER BY id', (busesErr, dbBuses) => {
         const busIds = (!busesErr && dbBuses && dbBuses.length > 0)
           ? dbBuses.map(b => b.id)
           : [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25];
 
-        const scheduleStmt = db.prepare('INSERT INTO schedules (route_id, bus_id, departure_time, arrival_time, base_price, available_seats, travel_date) VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT (route_id, bus_id, travel_date, departure_time) DO NOTHING');
+        const scheduleStmt = db.prepare('INSERT INTO schedules (route_id, bus_id, departure_time, arrival_time, base_price, available_seats, travel_date) VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT (route_id, bus_id, travel_date) DO NOTHING');
         const today = new Date();
         let scheduleCount = 0;
+
+        const routesMap = new Map();
+        dbRoutes.forEach((r, idx) => {
+          routesMap.set(r.id, idx);
+        });
 
         for (let day = startDayOffset; day < endDayOffset; day++) {
           const travelDate = new Date(today);
@@ -1365,11 +1361,12 @@ function generateSchedulesForDateRange(routesData, startDayOffset, endDayOffset)
             const routeId = route.id;
             const distKm = route.distance_km;
             const durationHrs = route.duration_hours;
+            const stableRouteIdx = routesMap.has(routeId) ? routesMap.get(routeId) : routeIdx;
 
             for (let i = 0; i < 4; i++) {
               const depTime = getStaggeredDepartureTime(routeId, i);
               const arrTime = calcArrival(depTime, durationHrs);
-              const busId = busIds[(routeIdx * 4 + i) % busIds.length];
+              const busId = busIds[(stableRouteIdx * 4 + i) % busIds.length];
               const basePrice = calculateDynamicPrice(distKm, busId, i, routeId, day);
               scheduleStmt.run(routeId, busId, depTime, arrTime, basePrice, 40, dateStr);
               scheduleCount++;
@@ -1403,49 +1400,59 @@ function addSchedulesForDate(routesData, dateStr, targetRouteId = null) {
         return resolve(0);
       }
 
-      db.all('SELECT id FROM buses ORDER BY id', (busesErr, dbBuses) => {
-        const busIds = (!busesErr && dbBuses && dbBuses.length > 0)
-          ? dbBuses.map(b => b.id)
-          : [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25];
-        const dayOffset = getDayOffsetFromToday(dateStr);
+      // Query ALL routes to get stable route index mapping
+      db.all('SELECT id FROM routes ORDER BY id', (allRoutesErr, allRoutes) => {
+        const routesMap = new Map();
+        if (!allRoutesErr && allRoutes) {
+          allRoutes.forEach((r, idx) => {
+            routesMap.set(r.id, idx);
+          });
+        }
 
-        db.all('SELECT bus_id, route_id FROM stopped_route_services', (stoppedErr, stoppedRows) => {
-          const stoppedSet = new Set((stoppedRows || []).map(r => `${r.bus_id}_${r.route_id}`));
+        db.all('SELECT id FROM buses WHERE is_daily_service = 1 ORDER BY id', (busesErr, dbBuses) => {
+          const busIds = (!busesErr && dbBuses && dbBuses.length > 0)
+            ? dbBuses.map(b => b.id)
+            : [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25];
+          const dayOffset = getDayOffsetFromToday(dateStr);
 
-          // Get existing schedule keys for this date to avoid duplicate inserts
-          db.all('SELECT route_id, bus_id, departure_time FROM schedules WHERE travel_date = ?', [dateStr], (existErr, existSchedules) => {
-            const existingSet = new Set((existSchedules || []).map(s => `${s.route_id}_${s.bus_id}_${s.departure_time}`));
-            let scheduleCount = 0;
-            const scheduleStmt = db.prepare('INSERT INTO schedules (route_id, bus_id, departure_time, arrival_time, base_price, available_seats, travel_date) VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT (route_id, bus_id, travel_date, departure_time) DO NOTHING');
+          db.all('SELECT bus_id, route_id FROM stopped_route_services', (stoppedErr, stoppedRows) => {
+            const stoppedSet = new Set((stoppedRows || []).map(r => `${r.bus_id}_${r.route_id}`));
 
-            for (let routeIdx = 0; routeIdx < dbRoutes.length; routeIdx++) {
-              const route = dbRoutes[routeIdx];
-              const routeId = route.id;
-              const distKm = route.distance_km;
-              const durationHrs = route.duration_hours;
+            // Get existing schedule keys for this date to avoid duplicate inserts
+            db.all('SELECT route_id, bus_id, departure_time FROM schedules WHERE travel_date = ?', [dateStr], (existErr, existSchedules) => {
+              const existingSet = new Set((existSchedules || []).map(s => `${s.route_id}_${s.bus_id}`));
+              let scheduleCount = 0;
+              const scheduleStmt = db.prepare('INSERT INTO schedules (route_id, bus_id, departure_time, arrival_time, base_price, available_seats, travel_date) VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT (route_id, bus_id, travel_date) DO NOTHING');
 
-              for (let i = 0; i < 4; i++) {
-                const busId = busIds[(routeIdx * 4 + i) % busIds.length];
-                if (stoppedSet.has(`${busId}_${routeId}`)) {
-                  continue;
+              for (let routeIdx = 0; routeIdx < dbRoutes.length; routeIdx++) {
+                const route = dbRoutes[routeIdx];
+                const routeId = route.id;
+                const distKm = route.distance_km;
+                const durationHrs = route.duration_hours;
+                const stableRouteIdx = routesMap.has(routeId) ? routesMap.get(routeId) : routeIdx;
+
+                for (let i = 0; i < 4; i++) {
+                  const busId = busIds[(stableRouteIdx * 4 + i) % busIds.length];
+                  if (stoppedSet.has(`${busId}_${routeId}`)) {
+                    continue;
+                  }
+                  const depTime = getStaggeredDepartureTime(routeId, i);
+                  if (existingSet.has(`${routeId}_${busId}`)) {
+                    continue;
+                  }
+                  const arrTime = calcArrival(depTime, durationHrs);
+                  const basePrice = calculateDynamicPrice(distKm, busId, i, routeId, dayOffset);
+                  scheduleStmt.run(routeId, busId, depTime, arrTime, basePrice, 40, dateStr);
+                  scheduleCount++;
                 }
-                const depTime = getStaggeredDepartureTime(routeId, i);
-                const key = `${routeId}_${busId}_${depTime}`;
-                if (existingSet.has(key)) {
-                  continue;
-                }
-                const arrTime = calcArrival(depTime, durationHrs);
-                const basePrice = calculateDynamicPrice(distKm, busId, i, routeId, dayOffset);
-                scheduleStmt.run(routeId, busId, depTime, arrTime, basePrice, 40, dateStr);
-                scheduleCount++;
               }
-            }
 
-            scheduleStmt.finalize(() => {
-              if (scheduleCount > 0) {
-                console.log(`✅ Added ${scheduleCount} schedule(s) for ${dateStr}${targetRouteId ? ` (Route #${targetRouteId})` : ''}`);
-              }
-              resolve(scheduleCount);
+              scheduleStmt.finalize(() => {
+                if (scheduleCount > 0) {
+                  console.log(`✅ Added ${scheduleCount} schedule(s) for ${dateStr}${targetRouteId ? ` (Route #${targetRouteId})` : ''}`);
+                }
+                resolve(scheduleCount);
+              });
             });
           });
         });
@@ -1514,234 +1521,236 @@ function applyDataVariationMigrations(done) {
 }
 
 // Cleanup old schedules and bookings, add new schedules for 35-day window
-function performDailyCleanup(routesData) {
+function performDailyCleanup(routesData, done) {
   const { getLocalDateString, getOffsetLocalDateString } = require('../utils/dateUtils');
   const today = new Date();
   const todayStr = getLocalDateString();
-  const day35Str = getOffsetLocalDateString(34);
+  const day30Str = getOffsetLocalDateString(29);
   
   console.log(`🧹 Daily cleanup running...`);
   console.log(`   📅 Local system date: ${todayStr} (${today.toLocaleString()})`);
   console.log(`   🗑️  Deleting all dates before: ${todayStr}`);
-  console.log(`   ➕ Will ensure day 35 exists: ${day35Str}`);
+  console.log(`   ➕ Will ensure day 30 exists: ${day30Str}`);
   
-  // If routesData not provided, query from database
   if (!routesData) {
     db.all('SELECT from_city, to_city, distance_km, duration_hours FROM routes', (err, routes) => {
       if (err) {
         console.error('❌ Error querying routes for cleanup:', err);
+        if (typeof done === 'function') done();
         return;
       }
       const routesDataFromDb = routes.map(r => [r.from_city, r.to_city, r.distance_km, r.duration_hours]);
-      performDailyCleanupWithData(routesDataFromDb, todayStr, day35Str);
+      performDailyCleanupWithData(routesDataFromDb, todayStr, day30Str, done);
     });
   } else {
-    performDailyCleanupWithData(routesData, todayStr, day35Str);
+    performDailyCleanupWithData(routesData, todayStr, day30Str, done);
   }
 }
 
-function deduplicateSchedules(callback) {
-  // Purge duplicate schedule rows keeping only the first (lowest ID) for each (route_id, bus_id, travel_date, departure_time)
-  db.run(`
-    DELETE FROM schedules
-    WHERE id IN (
-      SELECT s1.id
-      FROM schedules s1
-      INNER JOIN schedules s2 ON s1.route_id = s2.route_id 
-        AND s1.bus_id = s2.bus_id 
-        AND s1.travel_date = s2.travel_date 
-        AND s1.departure_time = s2.departure_time
-      WHERE s1.id > s2.id
-    )
-  `, function(err) {
-    if (!err && this && this.changes > 0) {
-      console.log(`✅ Deduplicated database: Purged ${this.changes} duplicate schedule entry/entries.`);
-    }
-    if (typeof callback === 'function') callback();
-  });
-}
-
-function performDailyCleanupWithData(routesData, todayStr, day35Str) {
+function performDailyCleanupWithData(routesData, todayStr, day30Str, done) {
   console.log('');
   console.log('================================================================================');
   console.log('📅 DAILY CLEANUP PROCESS');
   console.log('================================================================================');
   
-  // Deduplicate any accidental duplicate schedules first
-  deduplicateSchedules();
+  migrateDuplicateSchedules(() => {
+    // 1. Run deletes sequentially
+    runCleanupQueries(todayStr, day30Str, () => {
+      // 2. Generate missing schedules
+      generateMissingSchedules(todayStr, day30Str, () => {
+        console.log('✅ Daily cleanup and schedule generation completed successfully.');
+        if (typeof done === 'function') done();
+      });
+    });
+  });
+}
 
-  // First, check current date range in database
-  db.get(`
-    SELECT 
-      MIN(travel_date) as first_date,
-      MAX(travel_date) as last_date,
-      COUNT(DISTINCT travel_date) as total_days,
-      COUNT(*) as total_schedules
-    FROM schedules
-  `, (err, current) => {
-    if (!err && current && current.total_schedules > 0) {
-      console.log('📊 BEFORE CLEANUP:');
-      console.log(`   First date: ${current.first_date}`);
-      console.log(`   Last date: ${current.last_date}`);
-      console.log(`   Total days: ${current.total_days}`);
-      console.log(`   Total schedules: ${current.total_schedules}`);
-    } else {
-      console.log('📊 Database is empty or error occurred');
-    }
+function runCleanupQueries(todayStr, day30Str, callback) {
+  db.run(`
+    DELETE FROM bookings 
+    WHERE schedule_id IN (
+      SELECT id FROM schedules WHERE travel_date < ?
+    )
+  `, [todayStr], (err) => {
+    if (err) console.error('❌ Error deleting old bookings:', err);
+    else console.log('✅ Deleted expired booking(s)');
     
-    // Check what dates will be deleted
-    db.all('SELECT DISTINCT travel_date FROM schedules WHERE travel_date < ? ORDER BY travel_date', [todayStr], (err, oldDates) => {
-      if (err) {
-        console.error('❌ Error checking old dates:', err);
-        return;
-      }
+    db.run('DELETE FROM seat_locks WHERE expires_at < CURRENT_TIMESTAMP AT TIME ZONE \'UTC\'', (err) => {
+      if (err) console.error('❌ Error deleting expired seat locks:', err);
+      else console.log('✅ Deleted expired seat lock(s)');
       
-      console.log('');
-      console.log('🔍 CLEANUP TARGETS:');
-      if (oldDates && oldDates.length > 0) {
-        console.log(`   ❌ Dates to DELETE: ${oldDates.map(d => d.travel_date).join(', ')}`);
-      } else {
-        console.log(`   ✅ No old dates to delete (all dates >= ${todayStr})`);
-      }
-      console.log(`   ➕ Date to ADD (if missing): ${day35Str} (day 35 from today)`);
-      console.log('');
-      
-      // Perform the actual cleanup
-      db.serialize(() => {
-        // Delete old bookings first (foreign key constraint)
-        db.run(`
-          DELETE FROM bookings 
-          WHERE schedule_id IN (
-            SELECT id FROM schedules WHERE travel_date < ?
-          )
-        `, [todayStr], function(err) {
-          if (err) {
-            console.error('❌ Error deleting old bookings:', err);
-          } else if (this.changes > 0) {
-            console.log(`✅ Deleted ${this.changes} old booking(s)`);
-          }
-        });
+      db.run('DELETE FROM schedules WHERE travel_date < ?', [todayStr], (err) => {
+        if (err) console.error('❌ Error deleting old schedules:', err);
+        else console.log('✅ Deleted expired schedule(s)');
         
-        // Delete old seat locks
-        db.run('DELETE FROM seat_locks WHERE expires_at < CURRENT_TIMESTAMP AT TIME ZONE \'UTC\'', function(err) {
-          if (err) {
-            console.error('❌ Error deleting expired seat locks:', err);
-          } else if (this.changes > 0) {
-            console.log(`✅ Deleted ${this.changes} expired seat lock(s)`);
-          }
-        });
-        
-        // Delete old schedules
-        db.run('DELETE FROM schedules WHERE travel_date < ?', [todayStr], function(err) {
-          if (err) {
-            console.error('❌ Error deleting old schedules:', err);
-          } else {
-            if (this.changes > 0) {
-              console.log(`✅ Deleted ${this.changes} old schedule(s) (before ${todayStr})`);
-            } else {
-              console.log(`✅ No old schedules to delete`);
-            }
-          }
-        });
-
-        // Delete orphan bookings referencing non-existent schedules/routes
         db.run(`
           DELETE FROM bookings
           WHERE schedule_id IN (
             SELECT id FROM schedules WHERE route_id NOT IN (SELECT id FROM routes) OR bus_id NOT IN (SELECT id FROM buses)
           )
-        `, function(err) {
-          if (!err && this && this.changes > 0) {
-            console.log(`✅ Cleaned up ${this.changes} orphan booking(s)`);
-          }
-        });
-
-        // Delete orphan schedules referencing non-existent routes or buses
-        db.run('DELETE FROM schedules WHERE route_id NOT IN (SELECT id FROM routes) OR bus_id NOT IN (SELECT id FROM buses)', function(err) {
-          if (!err && this && this.changes > 0) {
-            console.log(`✅ Cleaned up ${this.changes} orphan schedule(s)`);
-          }
-        });
-        
-        // Ensure ALL 35 days exist for ALL active routes (fill any gaps per route)
-        console.log('');
-        console.log('🔍 Checking for missing route schedules in 35-day window...');
-        
-        const today = new Date();
-        const { getOffsetLocalDateString } = require('../utils/dateUtils');
-        const requiredDates = [];
-        
-        // Generate all 35 dates that should exist
-        for (let dayOffset = 0; dayOffset < 35; dayOffset++) {
-          requiredDates.push(getOffsetLocalDateString(dayOffset));
-        }
-        
-        db.all('SELECT id FROM routes ORDER BY id', (allRoutesErr, allDbRoutes) => {
-          if (allRoutesErr || !allDbRoutes || allDbRoutes.length === 0) {
-            return;
-          }
-          const allRouteIds = allDbRoutes.map(r => r.id);
-          let totalAddedSchedules = 0;
+        `, (err) => {
+          if (err) console.error('❌ Error cleaning up orphan bookings:', err);
           
-          (async () => {
-            for (const dateStr of requiredDates) {
-              try {
-                const resultRows = await new Promise((res, rej) => {
-                  db.all('SELECT DISTINCT route_id FROM schedules WHERE travel_date = ?', [dateStr], (err, rows) => {
-                    if (err) rej(err); else res(rows || []);
-                  });
-                });
-                const routesWithSchedules = new Set(resultRows.map(r => Number(r.route_id)));
-                const missingRouteIds = allRouteIds.filter(id => !routesWithSchedules.has(id));
+          db.run('DELETE FROM schedules WHERE route_id NOT IN (SELECT id FROM routes) OR bus_id NOT IN (SELECT id FROM buses)', (err) => {
+            if (err) console.error('❌ Error cleaning up orphan schedules:', err);
+            
+            db.run('DELETE FROM schedules WHERE travel_date > ? AND id NOT IN (SELECT DISTINCT schedule_id FROM bookings)', [day30Str], (err) => {
+              if (err) console.error('❌ Error deleting out-of-range schedules:', err);
+              else console.log('✅ Deleted out-of-range schedule(s)');
+              
+              callback();
+            });
+          });
+        });
+      });
+    });
+  });
+}
 
-                if (missingRouteIds.length > 0) {
-                  for (const mRouteId of missingRouteIds) {
-                    const added = await addSchedulesForDate(routesData, dateStr, mRouteId);
-                    totalAddedSchedules += added;
-                  }
+function generateMissingSchedules(todayStr, day30Str, callback) {
+  console.log('');
+  console.log('🔍 Checking for missing route schedules in 30-day window...');
+  
+  const { getOffsetLocalDateString } = require('../utils/dateUtils');
+  const requiredDates = [];
+  for (let dayOffset = 0; dayOffset < 30; dayOffset++) {
+    requiredDates.push(getOffsetLocalDateString(dayOffset));
+  }
+  
+  db.all('SELECT id, from_city, to_city, distance_km, duration_hours FROM routes ORDER BY id', (allRoutesErr, allDbRoutes) => {
+    if (allRoutesErr || !allDbRoutes || allDbRoutes.length === 0) {
+      if (allRoutesErr) console.error('Error fetching routes:', allRoutesErr);
+      return callback();
+    }
+    
+    db.all('SELECT id FROM buses WHERE is_daily_service = 1 ORDER BY id', (busesErr, dbBuses) => {
+      if (busesErr || !dbBuses || dbBuses.length === 0) {
+        if (busesErr) console.error('Error fetching buses:', busesErr);
+        return callback();
+      }
+      const busIds = dbBuses.map(b => b.id);
+      
+      db.all('SELECT bus_id, route_id FROM stopped_route_services', (stoppedErr, stoppedRows) => {
+        if (stoppedErr) console.error('Error fetching stopped route services:', stoppedErr);
+        const stoppedSet = new Set((stoppedRows || []).map(r => `${r.bus_id}_${r.route_id}`));
+        
+        db.all('SELECT route_id, bus_id, travel_date FROM schedules WHERE travel_date >= ? AND travel_date <= ?', [todayStr, day30Str], (existErr, existSchedules) => {
+          if (existErr) console.error('Error fetching existing schedules:', existErr);
+          const existingSet = new Set((existSchedules || []).map(s => `${s.route_id}_${s.bus_id}_${s.travel_date}`));
+          
+          const routesMap = new Map();
+          allDbRoutes.forEach((r, idx) => {
+            routesMap.set(r.id, idx);
+          });
+          
+          const schedulesToInsert = [];
+          
+          for (const dateStr of requiredDates) {
+            const dayOffset = getDayOffsetFromToday(dateStr);
+            
+            for (let routeIdx = 0; routeIdx < allDbRoutes.length; routeIdx++) {
+              const route = allDbRoutes[routeIdx];
+              const routeId = route.id;
+              const distKm = route.distance_km;
+              const durationHrs = route.duration_hours;
+              
+              for (let i = 0; i < 4; i++) {
+                const busId = busIds[(routeIdx * 4 + i) % busIds.length];
+                if (stoppedSet.has(`${busId}_${routeId}`)) {
+                  continue;
                 }
-              } catch (err) {
-                console.error(`Error populating schedules for date ${dateStr}:`, err);
+                
+                const key = `${routeId}_${busId}_${dateStr}`;
+                if (existingSet.has(key)) {
+                  continue;
+                }
+                
+                const depTime = getStaggeredDepartureTime(routeId, i);
+                const arrTime = calcArrival(depTime, durationHrs);
+                const basePrice = calculateDynamicPrice(distKm, busId, i, routeId, dayOffset);
+                
+                schedulesToInsert.push({
+                  route_id: routeId,
+                  bus_id: busId,
+                  departure_time: depTime,
+                  arrival_time: arrTime,
+                  base_price: basePrice,
+                  available_seats: 40,
+                  travel_date: dateStr
+                });
               }
             }
+          }
+          
+          if (schedulesToInsert.length === 0) {
+            console.log('✅ All 30 days fully populated for all routes - no schedule gaps found!');
+            verifyAndFinish();
+            return;
+          }
 
-            if (totalAddedSchedules === 0) {
-              console.log('✅ All 35 days fully populated for all routes - no schedule gaps found!');
-            } else {
-              console.log(`✅ Filled a total of ${totalAddedSchedules} missing route schedule(s) across 35 days.`);
+          console.log(`➕ Found ${schedulesToInsert.length} missing schedules to insert. Running batch inserts...`);
+          
+          const batchSize = 100;
+          const runBatch = async (batch) => {
+            const placeholders = [];
+            const flatParams = [];
+            let paramIndex = 1;
+            
+            batch.forEach((s) => {
+              placeholders.push(`($${paramIndex}, $${paramIndex+1}, $${paramIndex+2}, $${paramIndex+3}, $${paramIndex+4}, $${paramIndex+5}, $${paramIndex+6})`);
+              flatParams.push(s.route_id, s.bus_id, s.departure_time, s.arrival_time, s.base_price, s.available_seats, s.travel_date);
+              paramIndex += 7;
+            });
+            
+            const sql = `
+              INSERT INTO schedules 
+                (route_id, bus_id, departure_time, arrival_time, base_price, available_seats, travel_date) 
+              VALUES 
+                ${placeholders.join(', ')} 
+              ON CONFLICT (route_id, bus_id, travel_date) DO NOTHING
+            `;
+            
+            await new Promise((resolve) => {
+              db.run(sql, flatParams, (err) => {
+                if (err) console.error('Error running batch insert:', err);
+                resolve();
+              });
+            });
+          };
+
+          (async () => {
+            for (let i = 0; i < schedulesToInsert.length; i += batchSize) {
+              const batch = schedulesToInsert.slice(i, i + batchSize);
+              await runBatch(batch);
             }
             
-            // Final verification
-            setTimeout(() => {
-              db.get(`
-                SELECT 
-                  MIN(travel_date) as first_date,
-                  MAX(travel_date) as last_date,
-                  COUNT(DISTINCT travel_date) as total_days,
-                  COUNT(*) as total_schedules
-                FROM schedules
-              `, (err, final) => {
-                if (!err && final) {
-                  console.log('');
-                  console.log('📊 AFTER CLEANUP:');
-                  console.log(`   First date: ${final.first_date} (should be ${todayStr})`);
-                  console.log(`   Last date: ${final.last_date} (should be ${day35Str})`);
-                  console.log(`   Total days: ${final.total_days}`);
-                  console.log(`   Total schedules: ${final.total_schedules}`);
-                  console.log('');
-                  
-                  // Verify we have at least 35 days
-                  if (Number(final.total_days) >= 35 && final.first_date === todayStr) {
-                    console.log('✅ SUCCESS: 35 days maintained! (' + todayStr + ' to ' + day35Str + ')');
-                  } else {
-                    console.log(`⚠️  WARNING: Expected 35 days, but found ${final.total_days} days`);
-                  }
-                  console.log('================================================================================');
-                  console.log('');
-                }
-              });
-            }, 1000);
+            console.log(`✅ Filled a total of ${schedulesToInsert.length} missing route schedule(s) across 30 days.`);
+            verifyAndFinish();
           })();
+
+          function verifyAndFinish() {
+            // Verify active window dates
+            db.get(`
+              SELECT 
+                MIN(travel_date) as first_date,
+                MAX(travel_date) as last_date,
+                COUNT(DISTINCT travel_date) as total_days,
+                COUNT(*) as total_schedules
+              FROM schedules
+              WHERE travel_date >= ? AND travel_date <= ?
+            `, [todayStr, day30Str], (err, final) => {
+              if (!err && final) {
+                console.log('');
+                console.log('📊 AFTER CLEANUP (ACTIVE WINDOW):');
+                console.log(`   First date: ${final.first_date} (should be ${todayStr})`);
+                console.log(`   Last date: ${final.last_date} (should be ${day30Str})`);
+                console.log(`   Total days: ${final.total_days}`);
+                console.log(`   Total schedules: ${final.total_schedules}`);
+                console.log('');
+              }
+              callback();
+            });
+          }
         });
       });
     });
@@ -2026,6 +2035,208 @@ function syncRouteCitiesToPlacesTable(callback) {
   });
 }
 
+function migrateDuplicateSchedules(done) {
+  console.log('🔄 Cleaning up duplicate schedules and migrating bookings/locks...');
+  
+  db.serialize(() => {
+    // 1. Update bookings pointing to duplicates
+    db.run(`
+      WITH duplicate_groups AS (
+        SELECT route_id, bus_id, travel_date
+        FROM schedules
+        GROUP BY route_id, bus_id, travel_date
+        HAVING COUNT(*) > 1
+      ),
+      ranked_schedules AS (
+        SELECT s.id, s.route_id, s.bus_id, s.travel_date,
+               ROW_NUMBER() OVER (
+                 PARTITION BY s.route_id, s.bus_id, s.travel_date 
+                 ORDER BY (SELECT COUNT(*) FROM bookings b WHERE b.schedule_id = s.id) DESC, s.id ASC
+               ) as rn
+        FROM schedules s
+        JOIN duplicate_groups dg ON s.route_id = dg.route_id AND s.bus_id = dg.bus_id AND s.travel_date = dg.travel_date
+      ),
+      kept_schedules AS (
+        SELECT id, route_id, bus_id, travel_date FROM ranked_schedules WHERE rn = 1
+      ),
+      deleted_schedules AS (
+        SELECT rs.id as del_id, ks.id as keep_id 
+        FROM ranked_schedules rs
+        JOIN kept_schedules ks ON rs.route_id = ks.route_id AND rs.bus_id = ks.bus_id AND rs.travel_date = ks.travel_date
+        WHERE rs.rn > 1
+      )
+      UPDATE bookings b
+      SET schedule_id = ds.keep_id
+      FROM deleted_schedules ds
+      WHERE b.schedule_id = ds.del_id
+    `, (err) => {
+      if (err) console.error('Error migrating bookings for duplicates:', err);
+      
+      // 2. Update seat locks pointing to duplicates
+      db.run(`
+        WITH duplicate_groups AS (
+          SELECT route_id, bus_id, travel_date
+          FROM schedules
+          GROUP BY route_id, bus_id, travel_date
+          HAVING COUNT(*) > 1
+        ),
+        ranked_schedules AS (
+          SELECT s.id, s.route_id, s.bus_id, s.travel_date,
+                 ROW_NUMBER() OVER (
+                   PARTITION BY s.route_id, s.bus_id, s.travel_date 
+                   ORDER BY (SELECT COUNT(*) FROM bookings b WHERE b.schedule_id = s.id) DESC, s.id ASC
+                 ) as rn
+          FROM schedules s
+          JOIN duplicate_groups dg ON s.route_id = dg.route_id AND s.bus_id = dg.bus_id AND s.travel_date = dg.travel_date
+        ),
+        kept_schedules AS (
+          SELECT id, route_id, bus_id, travel_date FROM ranked_schedules WHERE rn = 1
+        ),
+        deleted_schedules AS (
+          SELECT rs.id as del_id, ks.id as keep_id 
+          FROM ranked_schedules rs
+          JOIN kept_schedules ks ON rs.route_id = ks.route_id AND rs.bus_id = ks.bus_id AND rs.travel_date = ks.travel_date
+          WHERE rs.rn > 1
+        )
+        UPDATE seat_locks sl
+        SET schedule_id = ds.keep_id
+        FROM deleted_schedules ds
+        WHERE sl.schedule_id = ds.del_id
+      `, (err) => {
+        if (err) console.error('Error migrating seat locks for duplicates:', err);
+        
+        // 3. Delete the duplicate schedules
+        db.run(`
+          WITH duplicate_groups AS (
+            SELECT route_id, bus_id, travel_date
+            FROM schedules
+            GROUP BY route_id, bus_id, travel_date
+            HAVING COUNT(*) > 1
+          ),
+          ranked_schedules AS (
+            SELECT s.id, s.route_id, s.bus_id, s.travel_date,
+                   ROW_NUMBER() OVER (
+                     PARTITION BY s.route_id, s.bus_id, s.travel_date 
+                     ORDER BY (SELECT COUNT(*) FROM bookings b WHERE b.schedule_id = s.id) DESC, s.id ASC
+                   ) as rn
+            FROM schedules s
+            JOIN duplicate_groups dg ON s.route_id = dg.route_id AND s.bus_id = dg.bus_id AND s.travel_date = dg.travel_date
+          ),
+          kept_schedules AS (
+            SELECT id, route_id, bus_id, travel_date FROM ranked_schedules WHERE rn = 1
+          ),
+          deleted_schedules AS (
+            SELECT rs.id as del_id, ks.id as keep_id 
+            FROM ranked_schedules rs
+            JOIN kept_schedules ks ON rs.route_id = ks.route_id AND rs.bus_id = ks.bus_id AND rs.travel_date = ks.travel_date
+            WHERE rs.rn > 1
+          )
+          DELETE FROM schedules s
+          USING deleted_schedules ds
+          WHERE s.id = ds.del_id
+        `, async (err) => {
+          if (err) console.error('Error deleting duplicate schedules:', err);
+          else console.log('✅ Successfully deduplicated schedules and migrated bookings/locks.');
+          
+          try {
+            await ensureUniqueScheduleIndex();
+          } catch (idxErr) {
+            console.error('Error applying unique index:', idxErr);
+          }
+          if (done) done();
+        });
+      });
+    });
+  });
+}
+
+function ensureUniqueScheduleIndex() {
+  return new Promise((resolve, reject) => {
+    console.log('🔄 Verifying unique constraints on schedules table...');
+    db.run('DROP INDEX IF EXISTS idx_unique_schedules_times', (err) => {
+      if (err) console.error('Error dropping old index:', err);
+      db.run('CREATE UNIQUE INDEX IF NOT EXISTS idx_unique_schedules_route_bus_date ON schedules(route_id, bus_id, travel_date)', (err2) => {
+        if (err2) {
+          console.error('Error creating new unique index:', err2);
+          reject(err2);
+        } else {
+          console.log('✅ New unique constraint idx_unique_schedules_route_bus_date verified.');
+          resolve();
+        }
+      });
+    });
+  });
+}
+
+function validateRolling30DayWindow(routeId, busId) {
+  return new Promise((resolve) => {
+    const { getLocalDateString, getOffsetLocalDateString } = require('../utils/dateUtils');
+    const today = getLocalDateString();
+    const maxAllowedDate = getOffsetLocalDateString(29);
+
+    db.all(`
+      SELECT id, travel_date, departure_time 
+      FROM schedules 
+      WHERE route_id = ? AND bus_id = ?
+      ORDER BY travel_date, departure_time
+    `, [routeId, busId], (err, schedules) => {
+      if (err) {
+        return resolve({ error: err.message });
+      }
+
+      const total_records = schedules.length;
+      const unique_dates = [...new Set(schedules.map(s => s.travel_date))].sort();
+      const expired_dates = unique_dates.filter(d => d < today);
+      const future_out_of_range_dates = unique_dates.filter(d => d > maxAllowedDate);
+      
+      const activeWindowDates = unique_dates.filter(d => d >= today && d <= maxAllowedDate);
+      
+      const missing_dates = [];
+      for (let i = 0; i < 30; i++) {
+        const dStr = getOffsetLocalDateString(i);
+        if (!activeWindowDates.includes(dStr)) {
+          missing_dates.push(dStr);
+        }
+      }
+
+      const dateCounts = {};
+      schedules.forEach(s => {
+        if (s.travel_date >= today && s.travel_date <= maxAllowedDate) {
+          dateCounts[s.travel_date] = (dateCounts[s.travel_date] || 0) + 1;
+        }
+      });
+      const duplicate_dates = Object.entries(dateCounts)
+        .filter(([_, count]) => count > 1)
+        .map(([date, count]) => `${date} (${count} schedules)`);
+
+      const minimum_date = unique_dates.length > 0 ? unique_dates[0] : null;
+      const maximum_date = unique_dates.length > 0 ? unique_dates[unique_dates.length - 1] : null;
+
+      const is_valid = 
+        activeWindowDates.length === 30 &&
+        expired_dates.length === 0 &&
+        future_out_of_range_dates.length === 0 &&
+        duplicate_dates.length === 0 &&
+        missing_dates.length === 0;
+
+      resolve({
+        route_id: Number(routeId),
+        bus_id: Number(busId),
+        today,
+        minimum_date,
+        maximum_date,
+        total_records,
+        unique_dates: unique_dates.length,
+        missing_dates,
+        duplicate_dates,
+        expired_dates: expired_dates.length,
+        future_out_of_range_dates: future_out_of_range_dates.length,
+        is_valid
+      });
+    });
+  });
+}
+
 function getDatabase() {
   if (!db) {
     initializeDatabase();
@@ -2037,5 +2248,6 @@ module.exports = {
   initializeDatabase, 
   getDatabase,
   stopScheduleCleanupService,
-  performDailyCleanup
+  performDailyCleanup,
+  validateRolling30DayWindow
 };

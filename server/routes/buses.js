@@ -138,6 +138,67 @@ router.get('/debug/schedules', (req, res) => {
   }
 });
 
+// Diagnostic validate-window endpoint
+router.get('/debug/validate-window', async (req, res) => {
+  try {
+    const { validateRolling30DayWindow } = require('../database/init');
+    const { routeId, busId } = req.query;
+    const db = getDatabase();
+
+    if (routeId && busId) {
+      const summary = await validateRolling30DayWindow(routeId, busId);
+      return res.json(summary);
+    }
+
+    // Otherwise, validate all active services (active buses round-robined on active routes)
+    db.all('SELECT id FROM routes ORDER BY id', (allRoutesErr, allRoutes) => {
+      if (allRoutesErr || !allRoutes || allRoutes.length === 0) {
+        return res.status(500).json({ error: 'Failed to query routes' });
+      }
+
+      db.all('SELECT id FROM buses WHERE is_daily_service = 1 ORDER BY id', (busesErr, dbBuses) => {
+        if (busesErr || !dbBuses || dbBuses.length === 0) {
+          return res.status(500).json({ error: 'Failed to query buses' });
+        }
+        const busIds = dbBuses.map(b => b.id);
+
+        db.all('SELECT bus_id, route_id FROM stopped_route_services', async (stoppedErr, stoppedRows) => {
+          if (stoppedErr) return res.status(500).json({ error: 'Failed to query stopped services' });
+
+          const stoppedSet = new Set((stoppedRows || []).map(r => `${r.bus_id}_${r.route_id}`));
+          const activeServices = [];
+
+          allRoutes.forEach((route, routeIdx) => {
+            for (let i = 0; i < 4; i++) {
+              const busId = busIds[(routeIdx * 4 + i) % busIds.length];
+              if (!stoppedSet.has(`${busId}_${route.id}`)) {
+                activeServices.push({ routeId: route.id, busId });
+              }
+            }
+          });
+
+          // Run validations in batches
+          const summaries = [];
+          for (const service of activeServices) {
+            const summary = await validateRolling30DayWindow(service.routeId, service.busId);
+            summaries.push(summary);
+          }
+
+          res.json({
+            overall_valid: summaries.every(s => s.is_valid),
+            total_services: summaries.length,
+            valid_services: summaries.filter(s => s.is_valid).length,
+            invalid_services: summaries.filter(s => !s.is_valid).length,
+            summaries
+          });
+        });
+      });
+    });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to run diagnostics: ' + error.message });
+  }
+});
+
 // Search buses - supports single date or date range
 router.post('/search', (req, res) => {
   const { fromCity, toCity, travelDate, showAllDates } = req.body;
@@ -380,17 +441,18 @@ router.get('/availability/:routeId/:busId', (req, res) => {
     const db = getDatabase();
     
     // Get next 30 days of schedules for this route and bus
-    const { getLocalDateString } = require('../utils/dateUtils');
+    const { getLocalDateString, getOffsetLocalDateString } = require('../utils/dateUtils');
     const todayStr = getLocalDateString();
+    const maxAllowedDate = getOffsetLocalDateString(29);
     
     db.all(`
       SELECT s.*, 
              (SELECT COUNT(*) FROM bookings b WHERE b.schedule_id = s.id AND b.booking_status = 'confirmed') as bookings_count,
              (SELECT STRING_AGG(seat_numbers, ',') FROM bookings b WHERE b.schedule_id = s.id AND b.booking_status = 'confirmed') as booked_seats
       FROM schedules s
-      WHERE s.route_id = ? AND s.bus_id = ? AND s.travel_date >= ?
-      ORDER BY s.travel_date, s.departure_time
-    `, [routeId, busId, todayStr], (err, schedules) => {
+      WHERE s.route_id = ? AND s.bus_id = ? AND s.travel_date >= ? AND s.travel_date <= ?
+      ORDER BY s.travel_date ASC, s.departure_time ASC
+    `, [routeId, busId, todayStr, maxAllowedDate], (err, schedules) => {
       if (err) {
         return res.status(500).json({ error: 'Failed to fetch availability' });
       }

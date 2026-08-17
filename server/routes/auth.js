@@ -106,13 +106,13 @@ router.post('/register', async (req, res) => {
 
 // Login
 router.post('/login', async (req, res) => {
-  // Hard 15-second timeout — browser never hangs forever
+  // Hard 45-second timeout to accommodate Neon Serverless compute wake-up delay
   const loginTimeout = setTimeout(() => {
     if (!res.headersSent) {
-      console.error('Customer login TIMED OUT after 15s');
+      console.error('Customer login TIMED OUT after 45s');
       res.status(503).json({ error: 'Login timed out. Please try again.' });
     }
-  }, 15000);
+  }, 45000);
 
   try {
     const { username, password } = req.body;
